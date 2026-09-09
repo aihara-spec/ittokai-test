@@ -1,0 +1,28 @@
+ITTOKAI - Render無料テスト公開版
+
+目的:
+社内テスト用に、固定HTTPS URL (https://xxxx.onrender.com) でITTOKAIを公開します。
+
+重要:
+・この無料版はテスト専用です。
+・Render無料Webサービスのローカルファイルは永続保存されません。
+・再起動・再デプロイ等で、チャット/お知らせ/商品登録などのテストデータが初期状態に戻る可能性があります。
+・実際の利用者氏名、健康情報、連絡先などの本物の個人情報は入力しないでください。
+
+テストID:
+家族: family@ittokai.local / demo1234
+管理者: admin@ittokai.local / admin1234
+
+公開手順の概要:
+1. GitHubアカウントを作る/ログイン
+2. 新しいRepositoryを作る (ittokai-test)
+3. このフォルダの中身をRepositoryへアップロード
+4. Renderへログイン
+5. New > Web Service
+6. GitHubのittokai-testを選ぶ
+7. Freeを選ぶ
+8. Create Web Service
+9. 数分待つ
+10. https://ittokai-test-xxxx.onrender.com のようなURLが発行される
+
+詳細はChatGPTの案内に沿って進めてください。

@@ -1,0 +1,45 @@
+ITTOKAI 名称変更チェックリスト
+===============================
+
+採用する正式表示名
+- アプリ名: ITTOKAI
+- 日本語表記: 社会福祉法人 一燈会
+- 説明: 一燈会とご家族を、もっと近くに。
+
+このv10パッケージで変更済み
+- アプリ画面の Care Connect 表記 -> ITTOKAI
+- PWA/ホーム画面表示名 -> ITTOKAI
+- ブラウザタイトル -> ITTOKAI | 一燈会
+- アプリアイコン、スプラッシュ画面
+- 管理者テストID -> admin@ittokai.local
+- 家族テストID -> family@ittokai.local
+- 操作マニュアル -> ITTOKAI 操作マニュアル v10
+- Render設定テンプレートのサービス名 -> ittokai-test
+- DBファイル名 -> ittokai.db
+- プライバシーポリシー /privacy
+- 利用規約 /terms
+
+外部サービス側で手動変更が必要
+1. GitHub
+   Repository名を care-connect-test から ittokai-test に変更
+   Settings -> General -> Repository name -> Rename
+
+2. Render
+   現在の care-connect-test サービスを開く
+   Settings でサービス名を ittokai-test に変更
+   URLが変わった場合は新URLを控える
+
+3. LINE Developers
+   チャネル名: Care Connect -> ITTOKAI
+   LIFFアプリ名: Care Connect -> ITTOKAI
+   チャネルアイコン: ITTOKAI_Channel_Icon.png を登録
+   Render URLを変更した場合は Endpoint URL も新URLへ変更
+
+4. LINE DevelopersのURL欄
+   プライバシーポリシーURL: https://<RenderのURL>/privacy
+   サービス利用規約URL: https://<RenderのURL>/terms
+
+注意
+- LIFF IDはそのまま利用できます。表示名変更だけならLIFF URLは変わりません。
+- RenderのURLを変更した場合だけ、LIFF Endpoint URLを必ず更新してください。
+- 社内テスト中は実利用者の個人情報や介護・医療情報を入力しないでください。
