@@ -63,9 +63,9 @@
       ]
     },
     {
-      "name": "ショップ",
-      "short_name": "ショップ",
-      "url": "/?view=shop",
+      "name": "書類",
+      "short_name": "書類",
+      "url": "/?view=documents",
       "icons": [
         {
           "src": "/assets/icon-192.png",
