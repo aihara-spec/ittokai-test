@@ -307,9 +307,11 @@ def make_document_pdf(s, doc: Document, rec: Optional[DocumentRecipient]=None):
     for para in (doc.body or '').split('\n'):
         story.append(Paragraph(para or '　',st['body']))
     story.append(Spacer(1,8*mm)); story.append(Paragraph('電子署名・監査証跡',st['title']))
-    if rec:
-        u=s.get(User,rec.user_id); sig=s.query(DocumentSignature).filter_by(document_id=doc.id,recipient_id=rec.id).order_by(DocumentSignature.id.desc()).first()
-        data=[['署名者',u.name if u else ''],['ステータス',rec.status],['閲覧日時',dt_iso(rec.viewed_at) or '-'],['同意日時',dt_iso(rec.consent_at) or '-'],['署名日時',dt_iso(rec.signed_at) or '-'],['原本SHA-256',doc.original_hash or '-']]
+    recs=[rec] if rec else s.query(DocumentRecipient).filter_by(document_id=doc.id).order_by(DocumentRecipient.sign_order,DocumentRecipient.id).all()
+    for idx,rr in enumerate(recs):
+        u=s.get(User,rr.user_id); sig=s.query(DocumentSignature).filter_by(document_id=doc.id,recipient_id=rr.id).order_by(DocumentSignature.id.desc()).first()
+        if idx: story.append(Spacer(1,6*mm))
+        data=[['署名者',u.name if u else ''],['ステータス',rr.status],['閲覧日時',dt_iso(rr.viewed_at) or '-'],['同意日時',dt_iso(rr.consent_at) or '-'],['署名日時',dt_iso(rr.signed_at) or '-'],['原本SHA-256',doc.original_hash or '-']]
         if sig: data += [['署名SHA-256',sig.signature_hash],['IP',sig.ip],['User-Agent',sig.user_agent[:80]]]
         t=Table(data,colWidths=[35*mm,145*mm]); t.setStyle(TableStyle([('FONTNAME',(0,0),(-1,-1),'HeiseiKakuGo-W5'),('FONTSIZE',(0,0),(-1,-1),7.5),('GRID',(0,0),(-1,-1),0.3,colors.HexColor('#dddddd')),('BACKGROUND',(0,0),(0,-1),colors.HexColor('#fff3e8')),('VALIGN',(0,0),(-1,-1),'TOP'),('PADDING',(0,0),(-1,-1),4)])); story.append(t)
         if sig and sig.signature_data and ',' in sig.signature_data:
@@ -328,11 +330,20 @@ def make_document_pdf(s, doc: Document, rec: Optional[DocumentRecipient]=None):
     return evidence
 
 # ------------------ App ------------------
-app=FastAPI(title='ITTOKAI v20.1 Integrated',version='20.1')
+app=FastAPI(title='ITTOKAI v20.3 Integrated',version='20.3')
+
+@app.middleware('http')
+async def no_store_api_responses(request:Request, call_next):
+    response=await call_next(request)
+    if request.url.path.startswith('/api/'):
+        response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma']='no-cache'
+    return response
+
 Base.metadata.create_all(bind=engine); seed_data()
 
 @app.get('/health')
-def health(): return {'ok':True,'version':'20.1','database':'postgresql' if DATABASE_URL.startswith('postgresql') else 'sqlite'}
+def health(): return {'ok':True,'version':'20.3','database':'postgresql' if DATABASE_URL.startswith('postgresql') else 'sqlite'}
 
 class LoginIn(BaseModel): email:str; password:str
 @app.post('/api/login')
@@ -349,12 +360,93 @@ def logout(request:Request):
         if st: s.delete(st); s.commit()
     return {'ok':True}
 
+def document_revision_value(s,u):
+    """Return a lightweight revision number for document-related changes visible to the user.
+
+    AuditLog IDs are monotonic and every document send/view/sign/remind/reissue action creates a log.
+    Using a facility-scoped max ID lets clients detect remote changes without reloading the entire app.
+    """
+    q=s.query(func.max(AuditLog.id)).filter(AuditLog.module=='documents')
+    if u.role!='hq':
+        if not u.facility_id:
+            return 0
+        q=q.filter(AuditLog.facility_id==u.facility_id)
+    return int(q.scalar() or 0)
+
+@app.get('/api/documents/revision')
+def document_revision(request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s)
+        if u.role not in ('family','admin','hq'):
+            raise HTTPException(403,'電子書類の同期権限がありません')
+        return Response(
+            content=json.dumps({'revision':document_revision_value(s,u)}, ensure_ascii=False),
+            media_type='application/json',
+            headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache'}
+        )
+
+SYNC_ALLOWED = {
+    'family': {'documents','chat','visits','news','all'},
+    'staff': {'chat','workflow','visits','news','all'},
+    'middle_manager': {'chat','workflow','visits','news','procurement','all'},
+    'admin': {'documents','chat','workflow','visits','news','procurement','all'},
+    'hq': {'documents','workflow','visits','news','procurement','all'},
+    'caredo': {'procurement','all'},
+    'sponsor': set(),
+}
+
+def module_revision_value(s,u,module):
+    if module not in SYNC_ALLOWED.get(u.role,set()):
+        raise HTTPException(403,'同期権限がありません')
+    q=s.query(func.max(AuditLog.id))
+    if module!='all': q=q.filter(AuditLog.module==module)
+    # HQ is corporation-wide. CareDo sees procurement across all facilities.
+    if u.role=='caredo':
+        q=q.filter(AuditLog.module=='procurement')
+    elif u.role!='hq':
+        if not u.facility_id: return 0
+        q=q.filter(AuditLog.facility_id==u.facility_id)
+    return int(q.scalar() or 0)
+
+@app.get('/api/sync/revision')
+def sync_revision(request:Request,module:str='all'):
+    with SessionLocal() as s:
+        u=current_user(request,s)
+        return {'module':module,'revision':module_revision_value(s,u,module)}
+
+def chat_target(s,u,user_id=None):
+    require_roles(u,'family','staff','middle_manager','admin')
+    target=u.id if u.role=='family' else int(user_id or 0)
+    if not target: raise HTTPException(400,'相手を選択してください')
+    tu=s.get(User,target)
+    if not tu or tu.role!='family' or not tu.active: raise HTTPException(404,'家族アカウントがありません')
+    facility_scope(u,tu.facility_id)
+    return target,tu
+
+def chat_revision_value(s,u,user_id=None):
+    require_roles(u,'family','staff','middle_manager','admin')
+    if u.role!='family' and not user_id:
+        q=s.query(Message).filter_by(facility_id=u.facility_id)
+    else:
+        target,tu=chat_target(s,u,user_id)
+        q=s.query(Message).filter_by(family_user_id=target,facility_id=tu.facility_id)
+    max_id=int(q.with_entities(func.max(Message.id)).scalar() or 0)
+    read_count=int(q.filter(Message.read_at.is_not(None)).count())
+    return f'{max_id}:{read_count}'
+
+@app.get('/api/messages/revision')
+def messages_revision(request:Request,user_id:Optional[int]=None):
+    with SessionLocal() as s:
+        u=current_user(request,s)
+        return {'revision':chat_revision_value(s,u,user_id)}
+
 @app.get('/api/bootstrap')
 def bootstrap(request:Request):
     with SessionLocal() as s:
         u=current_user(request,s)
         fac=s.get(Facility,u.facility_id) if u.facility_id else None
-        data={'user':user_json(u),'facility':facility_json(fac) if fac else None,'role_labels':ROLE_LABEL,'version':'20.1','targets':{'facilities':50,'staff':1000,'middle_managers':200,'admins':50,'families':2000,'sponsors':100}}
+        data={'user':user_json(u),'facility':facility_json(fac) if fac else None,'role_labels':ROLE_LABEL,'version':'20.3','targets':{'facilities':50,'staff':1000,'middle_managers':200,'admins':50,'families':2000,'sponsors':100}}
+        if u.role in ('family','admin','hq'): data['document_revision']=document_revision_value(s,u)
         data['notifications']=[{'id':n.id,'title':n.title,'body':n.body,'module':n.module,'entity_id':n.entity_id,'created_at':dt_iso(n.created_at),'read_at':dt_iso(n.read_at)} for n in s.query(Notification).filter_by(user_id=u.id).order_by(Notification.id.desc()).limit(30).all()]
         if u.role=='family':
             links=s.query(FamilyLink,Resident).join(Resident,FamilyLink.resident_id==Resident.id).filter(FamilyLink.user_id==u.id).all(); resident_ids=[r.id for _,r in links]
@@ -365,17 +457,19 @@ def bootstrap(request:Request):
             data['messages']=messages_for_family(s,u.id,u.facility_id)
         elif u.role in ('staff','middle_manager','admin'):
             data['news']=[{'id':n.id,'category':n.category,'title':n.title,'body':n.body,'important':n.important,'image_url':n.image_url,'created_at':dt_iso(n.created_at)} for n in s.query(News).filter_by(facility_id=u.facility_id).order_by(News.id.desc()).limit(30)]
+            data['family_users']=family_users_for_facility(s,u.facility_id)
             data['my_requests']=workflow_list(s,u,own=True)
             data['visits']=visit_list_for_facility(s,u.facility_id)
             if u.role in ('middle_manager','admin'): data['approval_queue']=workflow_list(s,u,approval=True)
             if u.role=='admin':
-                data['documents']=document_list_for_facility(s,u.facility_id); data['family_users']=family_users_for_facility(s,u.facility_id); data['visit_rules']=visit_rules_for_facility(s,u.facility_id); data['procurement']=procurement_snapshot(s,u.facility_id)
+                data['documents']=document_list_for_facility(s,u.facility_id); data['visit_rules']=visit_rules_for_facility(s,u.facility_id); data['procurement']=procurement_snapshot(s,u.facility_id)
         elif u.role=='hq':
             data['dashboard']=hq_dashboard(s); data['facilities']=[facility_json(f) for f in s.query(Facility).filter_by(active=1).all()]; data['integrations']=integration_list(s)
         elif u.role=='caredo':
             data['caredo']=caredo_snapshot(s)
         elif u.role=='sponsor':
             data['sponsor']={'message':'外部協賛企業ポータル。利用者個人情報・介護情報は表示しません。','shop_url':'https://caredo-zakka.jp/shop/'}
+        data['sync_revisions']={m:module_revision_value(s,u,m) for m in SYNC_ALLOWED.get(u.role,set()) if m!='chat'}
         return data
 
 # -------- chat/news --------
@@ -385,31 +479,44 @@ def messages_for_family(s,uid,fid): return [{'id':m.id,'sender_id':m.sender_id,'
 @app.get('/api/messages')
 def get_messages(request:Request,user_id:Optional[int]=None):
     with SessionLocal() as s:
-        u=current_user(request,s); target=u.id if u.role=='family' else user_id
-        if not target: raise HTTPException(400,'相手を選択してください')
-        tu=s.get(User,target); facility_scope(u,tu.facility_id)
+        u=current_user(request,s); target,tu=chat_target(s,u,user_id)
+        changed=False
         for m in s.query(Message).filter_by(family_user_id=target,facility_id=tu.facility_id).all():
-            if m.sender_id!=u.id and not m.read_at: m.read_at=now_dt()
-        s.commit()
-        return {'messages':messages_for_family(s,target,tu.facility_id)}
+            if m.sender_id!=u.id and not m.read_at:
+                m.read_at=now_dt(); changed=True
+        if changed:
+            audit(s,request,u,'chat','read','message_thread',target,{'target':target},tu.facility_id)
+            s.commit()
+        return {'messages':messages_for_family(s,target,tu.facility_id),'revision':chat_revision_value(s,u,target if u.role!='family' else None)}
 
 class MsgIn(BaseModel): body:str; user_id:Optional[int]=None
 @app.post('/api/messages')
 def post_message(inp:MsgIn,request:Request):
     with SessionLocal() as s:
-        u=current_user(request,s); target=u.id if u.role=='family' else inp.user_id
-        if not target: raise HTTPException(400,'送信先が必要です')
-        tu=s.get(User,target); facility_scope(u,tu.facility_id)
-        m=Message(facility_id=tu.facility_id,family_user_id=target,sender_id=u.id,sender_name=u.name,sender_role=u.role,body=inp.body.strip()); s.add(m); notify(s,target if u.role!='family' else next((x.id for x in s.query(User).filter_by(facility_id=tu.facility_id,role='admin').all()),target),'新着トーク',inp.body[:80],'chat',target); audit(s,request,u,'chat','send','message','',{'target':target},tu.facility_id); s.commit(); return {'ok':True}
+        u=current_user(request,s); target,tu=chat_target(s,u,inp.user_id)
+        body=inp.body.strip()
+        if not body: raise HTTPException(400,'メッセージを入力してください')
+        if len(body)>4000: raise HTTPException(400,'メッセージは4000文字以内にしてください')
+        m=Message(facility_id=tu.facility_id,family_user_id=target,sender_id=u.id,sender_name=u.name,sender_role=u.role,body=body); s.add(m); s.flush()
+        if u.role=='family':
+            recipients=s.query(User).filter(User.facility_id==tu.facility_id,User.role.in_(['middle_manager','admin']),User.active==1).all()
+            for x in recipients: notify(s,x.id,'新着トーク',body[:80],'chat',target)
+        else:
+            notify(s,target,'施設から新着トークがあります',body[:80],'chat',target)
+        audit(s,request,u,'chat','send','message',m.id,{'target':target},tu.facility_id); s.commit(); return {'ok':True,'id':m.id}
 
 @app.post('/api/messages/read')
 def read_messages(inp:dict,request:Request):
     with SessionLocal() as s:
-        u=current_user(request,s); target=u.id if u.role=='family' else int(inp.get('user_id') or 0)
-        q=s.query(Message).filter_by(family_user_id=target)
-        for m in q.all():
-            if m.sender_id!=u.id and not m.read_at: m.read_at=now_dt()
-        s.commit(); return {'ok':True}
+        u=current_user(request,s); target,tu=chat_target(s,u,inp.get('user_id'))
+        changed=False
+        for m in s.query(Message).filter_by(family_user_id=target,facility_id=tu.facility_id).all():
+            if m.sender_id!=u.id and not m.read_at:
+                m.read_at=now_dt(); changed=True
+        if changed:
+            audit(s,request,u,'chat','read','message_thread',target,{'target':target},tu.facility_id)
+            s.commit()
+        return {'ok':True}
 
 
 class NewsIn(BaseModel):
@@ -448,6 +555,7 @@ def create_document(inp:DocumentCreate,request:Request):
 async def upload_document(request:Request,title:str=Form(...),category:str=Form('契約書'),recipient_user_ids:str=Form(...),due_days:int=Form(7),file:UploadFile=File(...)):
     data=await file.read()
     if len(data)>12*1024*1024: raise HTTPException(400,'PDFは12MB以下にしてください')
+    if not data.startswith(b'%PDF'): raise HTTPException(400,'PDF形式のファイルを選択してください')
     with SessionLocal() as s:
         u=current_user(request,s); require_roles(u,'admin','hq'); fid=u.facility_id or 1
         try: ids=[int(x) for x in recipient_user_ids.split(',') if x.strip()]
@@ -464,9 +572,13 @@ async def upload_document(request:Request,title:str=Form(...),category:str=Form(
 @app.post('/api/documents/{doc_id}/view')
 def view_document(doc_id:int,request:Request):
     with SessionLocal() as s:
-        u=current_user(request,s); r=s.query(DocumentRecipient).filter_by(document_id=doc_id,user_id=u.id).first()
-        if not r and u.role not in ('admin','hq'): raise HTTPException(403,'閲覧権限がありません')
-        if r and not r.viewed_at: r.viewed_at=now_dt(); r.status='viewed'; audit(s,request,u,'documents','view','document',doc_id); s.commit()
+        u=current_user(request,s); d=s.get(Document,doc_id)
+        if not d: raise HTTPException(404,'書類がありません')
+        r=s.query(DocumentRecipient).filter_by(document_id=doc_id,user_id=u.id).first()
+        if not r:
+            require_roles(u,'admin','hq'); facility_scope(u,d.facility_id)
+        if r and not r.viewed_at:
+            r.viewed_at=now_dt(); r.status='viewed'; audit(s,request,u,'documents','view','document',doc_id,facility_id=d.facility_id); s.commit()
         return {'ok':True}
 
 class SignIn(BaseModel): signer_name:str; signature_data:str; consent:bool=True
@@ -488,7 +600,8 @@ def original_document(doc_id:int,request:Request):
         u=current_user(request,s); d=s.get(Document,doc_id)
         if not d or not d.file_blob: raise HTTPException(404,'原本PDFがありません')
         r=s.query(DocumentRecipient).filter_by(document_id=doc_id,user_id=u.id).first()
-        if not r and u.role not in ('admin','hq'): raise HTTPException(403,'権限がありません')
+        if not r:
+            require_roles(u,'admin','hq'); facility_scope(u,d.facility_id)
         return Response(content=bytes(d.file_blob),media_type='application/pdf',headers={'Content-Disposition':f'inline; filename="original_{doc_id}.pdf"'})
 
 class ReissueIn(BaseModel):
@@ -497,7 +610,8 @@ class ReissueIn(BaseModel):
 def reissue_document(doc_id:int,inp:ReissueIn,request:Request):
     with SessionLocal() as s:
         u=current_user(request,s); require_roles(u,'admin','hq'); old=s.get(Document,doc_id)
-        if not old: raise HTTPException(404,'書類がありません'); facility_scope(u,old.facility_id)
+        if not old: raise HTTPException(404,'書類がありません')
+        facility_scope(u,old.facility_id)
         d=Document(facility_id=old.facility_id,title=inp.title or old.title,category=old.category,body=inp.body if inp.body is not None else old.body,version=old.version+1,status='sent',due_at=now_dt()+timedelta(days=inp.due_days),requires_signature=old.requires_signature,required_checks_json=old.required_checks_json,file_name=old.file_name,file_blob=old.file_blob,original_hash=old.original_hash,created_by=u.id,sent_at=now_dt(),previous_document_id=old.id); s.add(d); s.flush()
         for idx,r in enumerate(s.query(DocumentRecipient).filter_by(document_id=old.id).order_by(DocumentRecipient.sign_order).all(),1):
             s.add(DocumentRecipient(document_id=d.id,user_id=r.user_id,signer_role=r.signer_role,sign_order=idx,status='sent')); notify(s,r.user_id,'書類が再発行されました',d.title,'documents',d.id)
@@ -507,7 +621,8 @@ def reissue_document(doc_id:int,inp:ReissueIn,request:Request):
 def remind_document(doc_id:int,request:Request):
     with SessionLocal() as s:
         u=current_user(request,s); require_roles(u,'admin','hq'); d=s.get(Document,doc_id)
-        if not d: raise HTTPException(404,'書類がありません'); facility_scope(u,d.facility_id)
+        if not d: raise HTTPException(404,'書類がありません')
+        facility_scope(u,d.facility_id)
         n=0
         for r in s.query(DocumentRecipient).filter_by(document_id=d.id).all():
             if not r.signed_at: notify(s,r.user_id,'書類の確認をお願いします',d.title,'documents',d.id); n+=1
@@ -519,8 +634,8 @@ def signed_pdf(doc_id:int,request:Request):
         u=current_user(request,s); d=s.get(Document,doc_id)
         if not d: raise HTTPException(404,'書類がありません')
         r=s.query(DocumentRecipient).filter_by(document_id=doc_id,user_id=u.id).first()
-        if not r and u.role not in ('admin','hq'): raise HTTPException(403,'権限がありません')
-        if not r: r=s.query(DocumentRecipient).filter_by(document_id=doc_id).first()
+        if not r:
+            require_roles(u,'admin','hq'); facility_scope(u,d.facility_id)
         pdf=make_document_pdf(s,d,r); return Response(content=pdf,media_type='application/pdf',headers={'Content-Disposition':f'inline; filename="ITTOKAI_document_{doc_id}.pdf"'})
 
 # -------- workflow --------
@@ -531,7 +646,9 @@ def workflow_list(s,u,own=False,approval=False):
     if own: q=q.filter(WorkflowRequest.applicant_id==u.id)
     elif approval:
         q=q.filter(WorkflowRequest.facility_id==u.facility_id)
-        if u.role=='middle_manager': q=q.filter(WorkflowRequest.status=='pending_manager')
+        if u.role=='middle_manager':
+            q=q.filter(WorkflowRequest.status=='pending_manager')
+            if u.department_id: q=q.filter(WorkflowRequest.department_id==u.department_id)
         elif u.role=='admin': q=q.filter(WorkflowRequest.status.in_(['pending_admin','pending_manager']))
     return [workflow_json(s,w) for w in q.order_by(WorkflowRequest.id.desc()).limit(100)]
 
@@ -542,7 +659,10 @@ def create_workflow(inp:WorkflowIn,request:Request):
         u=current_user(request,s); require_roles(u,'staff','middle_manager','admin')
         status='pending_manager' if u.role=='staff' else ('pending_admin' if u.role=='middle_manager' else 'approved')
         w=WorkflowRequest(facility_id=u.facility_id,department_id=u.department_id,applicant_id=u.id,request_type=inp.request_type,status=status,request_date=inp.request_date,start_time=inp.start_time,end_time=inp.end_time,payload_json=json.dumps(inp.payload,ensure_ascii=False),applicant_comment=inp.comment); s.add(w); s.flush(); audit(s,request,u,'workflow','submit','workflow_request',w.id,{'type':inp.request_type},u.facility_id)
-        for a in s.query(User).filter(User.facility_id==u.facility_id,User.role.in_(['middle_manager','admin']),User.active==1).all(): notify(s,a.id,'職員申請があります',f'{u.name}：{inp.request_type}','workflow',w.id)
+        approvers=s.query(User).filter(User.facility_id==u.facility_id,User.role.in_(['middle_manager','admin']),User.active==1).all()
+        for a in approvers:
+            if a.role=='middle_manager' and u.department_id and a.department_id!=u.department_id: continue
+            notify(s,a.id,'職員申請があります',f'{u.name}：{inp.request_type}','workflow',w.id)
         s.commit(); return {'id':w.id,'status':w.status}
 
 class ApprovalIn(BaseModel): action:str; comment:str=''
@@ -550,8 +670,12 @@ class ApprovalIn(BaseModel): action:str; comment:str=''
 def workflow_action(rid:int,inp:ApprovalIn,request:Request):
     with SessionLocal() as s:
         u=current_user(request,s); require_roles(u,'middle_manager','admin'); w=s.get(WorkflowRequest,rid)
-        if not w: raise HTTPException(404,'申請がありません'); facility_scope(u,w.facility_id)
+        if not w: raise HTTPException(404,'申請がありません')
+        facility_scope(u,w.facility_id)
+        if u.role=='middle_manager' and u.department_id and w.department_id!=u.department_id: raise HTTPException(403,'他部署の申請は承認できません')
         if w.applicant_id==u.id: raise HTTPException(400,'自分の申請は承認できません')
+        if w.status not in ('pending_manager','pending_admin'): raise HTTPException(400,'この申請はすでに処理済みです')
+        if u.role=='middle_manager' and w.status!='pending_manager': raise HTTPException(400,'中間管理職の承認対象ではありません')
         if inp.action not in ('approve','reject','return'): raise HTTPException(400,'操作が不正です')
         if inp.action in ('reject','return') and not inp.comment.strip(): raise HTTPException(400,'否認・差戻しはコメント必須です')
         if inp.action=='approve':
@@ -571,14 +695,22 @@ def visit_list_for_facility(s,fid): return [visit_json(s,v) for v in s.query(Vis
 @app.get('/api/visits/availability')
 def visit_availability(request:Request,facility_id:int,visit_date:str):
     with SessionLocal() as s:
-        u=current_user(request,s); facility_scope(u,facility_id)
-        d=date.fromisoformat(visit_date); rules=s.query(VisitRule).filter_by(facility_id=facility_id,weekday=d.weekday(),active=1).all(); slots=[]
+        u=current_user(request,s); require_roles(u,'family','staff','middle_manager','admin','hq'); facility_scope(u,facility_id)
+        try: d=date.fromisoformat(visit_date)
+        except ValueError: raise HTTPException(400,'日付が不正です')
+        if d < datetime.now(JST).date(): raise HTTPException(400,'過去の日付は予約できません')
+        rules=s.query(VisitRule).filter_by(facility_id=facility_id,weekday=d.weekday(),active=1).all(); slots=[]
         blocks=s.query(VisitBlock).filter_by(facility_id=facility_id,block_date=visit_date).all()
         for r in rules:
             sh,sm=map(int,r.start_time.split(':')); eh,em=map(int,r.end_time.split(':')); cur=datetime.combine(d,time(sh,sm)); end=datetime.combine(d,time(eh,em))
             while cur+timedelta(minutes=r.slot_minutes)<=end:
                 st=cur.strftime('%H:%M'); et=(cur+timedelta(minutes=r.slot_minutes)).strftime('%H:%M'); blocked=any(not (et<=b.start_time or st>=b.end_time) for b in blocks)
-                count=s.query(VisitReservation).filter_by(facility_id=facility_id,visit_date=visit_date,start_time=st,place_name=r.place_name).filter(VisitReservation.status.in_(['confirmed','pending'])).count(); slots.append({'place_name':r.place_name,'start_time':st,'end_time':et,'capacity':r.capacity,'remaining':0 if blocked else max(0,r.capacity-count),'approval_mode':r.approval_mode}); cur+=timedelta(minutes=r.slot_minutes)
+                # Apply booking horizon/cutoff server-side.
+                days_ahead=(d-datetime.now(JST).date()).days
+                cutoff_at=datetime.combine(d,time(sh,sm),tzinfo=JST)-timedelta(hours=r.cutoff_hours)
+                outside=days_ahead>r.booking_days_ahead or datetime.now(JST)>cutoff_at
+                count=s.query(VisitReservation).filter_by(facility_id=facility_id,visit_date=visit_date,start_time=st,place_name=r.place_name).filter(VisitReservation.status.in_(['confirmed','pending'])).count()
+                slots.append({'place_name':r.place_name,'start_time':st,'end_time':et,'capacity':r.capacity,'remaining':0 if blocked or outside else max(0,r.capacity-count),'approval_mode':r.approval_mode,'max_visitors':r.max_visitors}); cur+=timedelta(minutes=r.slot_minutes)
         return {'date':visit_date,'slots':slots}
 
 class VisitIn(BaseModel): resident_id:int; visit_date:str; start_time:str; end_time:str; place_name:str; visitor_count:int=1; representative:str; phone:str=''; notes:str=''
@@ -590,13 +722,15 @@ def create_visit(inp:VisitIn,request:Request):
         link=s.query(FamilyLink).filter_by(user_id=u.id,resident_id=res.id).first()
         if not link: raise HTTPException(403,'この利用者の予約権限がありません')
         avail=visit_availability(request,res.facility_id,inp.visit_date)['slots']; slot=next((x for x in avail if x['start_time']==inp.start_time and x['place_name']==inp.place_name),None)
-        if not slot or slot['remaining']<=0: raise HTTPException(400,'この時間枠は満席です')
-        status='confirmed' if slot['approval_mode']=='auto' else 'pending'; v=VisitReservation(facility_id=res.facility_id,resident_id=res.id,family_user_id=u.id,visit_date=inp.visit_date,start_time=inp.start_time,end_time=inp.end_time,place_name=inp.place_name,visitor_count=inp.visitor_count,representative=inp.representative,phone=inp.phone,notes=inp.notes,status=status); s.add(v); s.flush(); audit(s,request,u,'visits','book','visit',v.id,{},res.facility_id); s.commit(); return {'id':v.id,'status':status}
+        if not slot or slot['remaining']<=0: raise HTTPException(400,'この時間枠は予約できません')
+        if inp.visitor_count<1 or inp.visitor_count>int(slot.get('max_visitors') or 4): raise HTTPException(400,'来訪人数が上限を超えています')
+        if not inp.representative.strip(): raise HTTPException(400,'来訪代表者名が必要です')
+        status='confirmed' if slot['approval_mode']=='auto' else 'pending'; v=VisitReservation(facility_id=res.facility_id,resident_id=res.id,family_user_id=u.id,visit_date=inp.visit_date,start_time=inp.start_time,end_time=slot['end_time'],place_name=inp.place_name,visitor_count=inp.visitor_count,representative=inp.representative.strip(),phone=inp.phone,notes=inp.notes,status=status); s.add(v); s.flush(); audit(s,request,u,'visits','book','visit',v.id,{},res.facility_id); s.commit(); return {'id':v.id,'status':status}
 
 @app.post('/api/visits/{vid}/cancel')
 def cancel_visit(vid:int,request:Request):
     with SessionLocal() as s:
-        u=current_user(request,s); v=s.get(VisitReservation,vid)
+        u=current_user(request,s); require_roles(u,'family','staff','middle_manager','admin','hq'); v=s.get(VisitReservation,vid)
         if not v: raise HTTPException(404,'予約がありません')
         if u.role=='family' and v.family_user_id!=u.id: raise HTTPException(403,'権限がありません')
         facility_scope(u,v.facility_id); v.status='cancelled'; audit(s,request,u,'visits','cancel','visit',vid,{},v.facility_id); s.commit(); return {'ok':True}
@@ -665,9 +799,21 @@ class OrderIn(BaseModel): items:list[dict]
 @app.post('/api/orders')
 def create_order(inp:OrderIn,request:Request):
     with SessionLocal() as s:
-        u=current_user(request,s); require_roles(u,'middle_manager','admin'); sup=s.query(Supplier).filter_by(code='CAREDO').first(); no='PO-'+datetime.now(JST).strftime('%Y%m%d%H%M%S')+'-'+str(secrets.randbelow(900)+100); o=PurchaseOrder(order_no=no,facility_id=u.facility_id,supplier_id=sup.id,status='submitted',approved_by=u.id,ordered_at=now_dt()); s.add(o); s.flush(); total=0
+        u=current_user(request,s); require_roles(u,'middle_manager','admin'); sup=s.query(Supplier).filter_by(code='CAREDO').first()
+        if not sup: raise HTTPException(500,'ケア・ドゥ取引先マスタがありません')
+        if not inp.items: raise HTTPException(400,'発注明細がありません')
+        validated=[]
         for x in inp.items:
-            p=s.get(Product,int(x['product_id'])); q=float(x['qty']); fp=s.query(FacilityPrice).filter_by(facility_id=u.facility_id,product_id=p.id).first(); price=fp.purchase_price if fp else p.standard_price; total+=q*price; s.add(PurchaseOrderItem(order_id=o.id,product_id=p.id,qty=q,unit_price=price))
+            try: pid=int(x['product_id']); q=float(x['qty'])
+            except Exception: raise HTTPException(400,'発注明細が不正です')
+            p=s.get(Product,pid)
+            if not p or not p.active or p.supplier_id!=sup.id: raise HTTPException(400,'ケア・ドゥの商品ではありません')
+            if q<=0: raise HTTPException(400,'発注数量は1以上にしてください')
+            if q<p.min_order_qty: raise HTTPException(400,f'{p.name}は最低{p.min_order_qty}{p.unit}から発注できます')
+            validated.append((p,q))
+        no='PO-'+datetime.now(JST).strftime('%Y%m%d%H%M%S%f')+'-'+secrets.token_hex(2).upper(); o=PurchaseOrder(order_no=no,facility_id=u.facility_id,supplier_id=sup.id,status='submitted',approved_by=u.id,ordered_at=now_dt()); s.add(o); s.flush(); total=0
+        for p,q in validated:
+            fp=s.query(FacilityPrice).filter_by(facility_id=u.facility_id,product_id=p.id).first(); price=fp.purchase_price if fp else p.standard_price; total+=q*price; s.add(PurchaseOrderItem(order_id=o.id,product_id=p.id,qty=q,unit_price=price))
         o.total_amount=total; audit(s,request,u,'procurement','order_submit','purchase_order',o.id,{'total':total},u.facility_id); s.commit(); return {'id':o.id,'order_no':o.order_no,'total_amount':total}
 
 class OrderStatusIn(BaseModel): status:str
@@ -677,8 +823,8 @@ def order_status(oid:int,inp:OrderStatusIn,request:Request):
         u=current_user(request,s); require_roles(u,'caredo','admin'); o=s.get(PurchaseOrder,oid)
         if not o: raise HTTPException(404,'注文がありません')
         if u.role=='admin': facility_scope(u,o.facility_id)
-        allowed=['confirmed','shipped','cancelled'] if u.role=='caredo' else ['cancelled']
-        if inp.status not in allowed: raise HTTPException(400,'状態が不正です')
+        allowed={'submitted':{'confirmed','cancelled'},'confirmed':{'shipped','cancelled'}} if u.role=='caredo' else {'submitted':{'cancelled'},'confirmed':{'cancelled'}}
+        if inp.status not in allowed.get(o.status,set()): raise HTTPException(400,'現在の状態からその変更はできません')
         o.status=inp.status
         if inp.status=='confirmed': o.confirmed_at=now_dt()
         if inp.status=='shipped': o.shipped_at=now_dt()
@@ -690,6 +836,9 @@ def create_invoice(inp:InvoiceIn,request:Request):
     with SessionLocal() as s:
         u=current_user(request,s); require_roles(u,'caredo'); o=s.get(PurchaseOrder,inp.order_id)
         if not o: raise HTTPException(404,'注文がありません')
+        if o.status!='received': raise HTTPException(400,'検品完了後に請求書を作成してください')
+        if s.query(Invoice).filter_by(order_id=o.id).first(): raise HTTPException(400,'この注文の請求書は作成済みです')
+        if s.query(Invoice).filter_by(invoice_no=inp.invoice_no).first(): raise HTTPException(400,'請求書番号が重複しています')
         total=0; inv=Invoice(invoice_no=inp.invoice_no,supplier_id=o.supplier_id,facility_id=o.facility_id,order_id=o.id,invoice_date=inp.invoice_date,status='received'); s.add(inv); s.flush()
         for x in inp.items:
             pid=int(x['product_id']); qty=float(x['qty']); price=float(x['unit_price']); amount=qty*price; total+=amount; s.add(InvoiceItem(invoice_id=inv.id,product_id=pid,qty=qty,unit_price=price,amount=amount))
@@ -712,17 +861,23 @@ class ReceiveIn(BaseModel):
 def receive_order(oid:int,inp:ReceiveIn,request:Request):
     with SessionLocal() as s:
         u=current_user(request,s); require_roles(u,'admin','middle_manager'); o=s.get(PurchaseOrder,oid)
-        if not o: raise HTTPException(404,'注文がありません'); facility_scope(u,o.facility_id)
+        if not o: raise HTTPException(404,'注文がありません')
+        facility_scope(u,o.facility_id)
+        if o.status not in ('shipped','partially_received'): raise HTTPException(400,'出荷済みの注文だけ検品できます')
         byid={x.id:x for x in s.query(PurchaseOrderItem).filter_by(order_id=o.id).all()}
         for x in inp.items:
             it=byid.get(int(x.get('item_id',0)))
             if not it: continue
-            new=float(x.get('received_qty',0)); delta=new-it.received_qty; it.received_qty=new
+            new=float(x.get('received_qty',0))
+            if new<0 or new>it.qty: raise HTTPException(400,'受領数量が不正です')
+            delta=new-it.received_qty; it.received_qty=new
             if delta:
                 inv=s.query(Inventory).filter_by(facility_id=o.facility_id,product_id=it.product_id).first()
                 if inv: inv.on_hand+=delta; inv.updated_at=now_dt()
                 s.add(InventoryTxn(facility_id=o.facility_id,product_id=it.product_id,txn_type='receipt',qty=delta,reference_type='purchase_order',reference_id=str(o.id),actor_id=u.id))
-        o.status='received'; o.received_at=now_dt(); audit(s,request,u,'procurement','receive_inspect','purchase_order',o.id,{},o.facility_id); s.commit(); return {'ok':True}
+        all_items=list(byid.values()); complete=all(abs(x.received_qty-x.qty)<0.0001 for x in all_items)
+        o.status='received' if complete else 'partially_received'; o.received_at=now_dt() if complete else None
+        audit(s,request,u,'procurement','receive_inspect','purchase_order',o.id,{'complete':complete},o.facility_id); s.commit(); return {'ok':True,'status':o.status}
 
 class ProductIn(BaseModel):
     sku:str; name:str; specification:str=''; category:str=''; unit:str='個'; standard_price:float=0; min_order_qty:int=1; lead_time_days:int=2

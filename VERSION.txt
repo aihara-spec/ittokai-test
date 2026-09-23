@@ -1,4 +1,1 @@
-ITTOKAI v20.1 Integrated
-Build date: 2026-09-23
-Scope: specification sections 1-6 integrated staging build
-Patch: authenticated PDF viewer for documents/originals/invoices
+20.3
