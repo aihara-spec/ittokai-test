@@ -18,7 +18,7 @@ GitHub連携でAuto-DeployがONなら自動でデプロイされます。
 1. Render > `ittokai-test`
 2. Manual Deploy
 3. Deploy latest commit
-4. `/health` が `{"ok":true,"version":"20.0"...}` なら成功
+4. `/health` が `{"ok":true,"version":"20.1"...}` なら成功
 
 ## 3. Supabaseを使う場合
 

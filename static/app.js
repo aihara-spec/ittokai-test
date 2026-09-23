@@ -5,6 +5,29 @@ const state={token:localStorage.getItem('ittokai_token')||'',data:null,view:'hom
 const CAREDO='https://caredo-zakka.jp/shop/';
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2200)}
 async function api(path,opt={}){const h={'Content-Type':'application/json',...(opt.headers||{})};if(state.token)h.Authorization='Bearer '+state.token;if(opt.body instanceof FormData)delete h['Content-Type'];const r=await fetch(path,{...opt,headers:h});if(!r.ok){let m='エラー';try{m=(await r.json()).detail||m}catch{}throw new Error(m)}const ct=r.headers.get('content-type')||'';return ct.includes('json')?r.json():r}
+async function openProtectedPdf(path,title='ITTOKAI PDF'){
+  // /api のPDFはログイン認証が必要。URLを直接開くとAuthorizationヘッダーが付かないため、
+  // 現在のセッショントークンで取得してからBlob URLとして表示する。トークンはURLへ露出しない。
+  const popup=window.open('about:blank','_blank');
+  if(popup){
+    try{popup.document.title=title;popup.document.body.innerHTML='<div style="font-family:sans-serif;padding:28px;color:#333">PDFを読み込んでいます…</div>'}catch{}
+  }
+  try{
+    const r=await fetch(path,{headers:{Authorization:'Bearer '+state.token}});
+    if(!r.ok){let m='PDFを開けませんでした';try{m=(await r.json()).detail||m}catch{}throw new Error(m)}
+    const b=await r.blob();
+    const u=URL.createObjectURL(b);
+    if(popup){
+      popup.location.replace(u);
+    }else{
+      const a=document.createElement('a');a.href=u;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove();
+    }
+    setTimeout(()=>URL.revokeObjectURL(u),5*60*1000);
+  }catch(err){
+    if(popup)popup.close();
+    toast(err.message||'PDFを開けませんでした');
+  }
+}
 function role(){return state.data?.user?.role||''}
 function icon(name){const map={home:'⌂',talk:'💬',documents:'✍',requests:'申',visits:'予',procurement:'在',dashboard:'▦',integrations:'⇄',shop:'🛒',me:'●',news:'🔔'};return map[name]||'•'}
 const labels={home:'ホーム',talk:'トーク',documents:'書類',requests:'申請',visits:'面会',procurement:'発注・在庫',dashboard:'管理',integrations:'連携',shop:'ショップ',me:'マイページ',news:'お知らせ'};
@@ -43,7 +66,7 @@ function bind(){
   $('#msgForm')?.addEventListener('submit',async e=>{e.preventDefault();const body=e.target.body.value.trim();if(!body)return;await api('/api/messages',{method:'POST',body:JSON.stringify({body,user_id:state.chatUser})});e.target.body.value='';const r=await api('/api/messages'+(state.chatUser?'?user_id='+state.chatUser:''));state.data.messages=r.messages;render()});
   $$('[data-modal]').forEach(b=>b.onclick=()=>{state.modal={type:b.dataset.modal};render()}); $('#modalClose')?.addEventListener('click',()=>{state.modal=null;render()});
   $$('[data-doc]').forEach(b=>b.onclick=async()=>{const id=Number(b.dataset.doc);try{await api(`/api/documents/${id}/view`,{method:'POST'})}catch{}state.modal={type:'docDetail',id};render();setupSignature()});
-  $$('[data-original]').forEach(b=>b.onclick=()=>window.open(`/api/documents/${b.dataset.original}/original`,'_blank')); $$('[data-pdf]').forEach(b=>b.onclick=()=>window.open(`/api/documents/${b.dataset.pdf}/pdf`,'_blank')); $$('[data-remind]').forEach(b=>b.onclick=async()=>{await api(`/api/documents/${b.dataset.remind}/remind`,{method:'POST'});toast('未署名者へ催促しました')});
+  $$('[data-original]').forEach(b=>b.onclick=()=>openProtectedPdf(`/api/documents/${b.dataset.original}/original`,'ITTOKAI 原本PDF')); $$('[data-pdf]').forEach(b=>b.onclick=()=>openProtectedPdf(`/api/documents/${b.dataset.pdf}/pdf`,'ITTOKAI 署名PDF')); $$('[data-remind]').forEach(b=>b.onclick=async()=>{await api(`/api/documents/${b.dataset.remind}/remind`,{method:'POST'});toast('未署名者へ催促しました')});
   $('#docCreateForm')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target),ids=[...e.target.querySelectorAll('input[name=recipient]:checked')].map(x=>Number(x.value));if(!ids.length)return toast('送付先を選択してください');const file=f.get('file');if(file&&file.size){const fd=new FormData();fd.append('title',f.get('title'));fd.append('category',f.get('category'));fd.append('recipient_user_ids',ids.join(','));fd.append('due_days',f.get('due_days'));fd.append('file',file);await api('/api/documents/upload',{method:'POST',body:fd})}else{const o={title:f.get('title'),category:f.get('category'),body:f.get('body'),recipient_user_ids:ids,due_days:Number(f.get('due_days')),requires_signature:true,required_checks:['内容を確認しました','電磁的方法による提供に同意します']};await api('/api/documents',{method:'POST',body:JSON.stringify(o)})}state.modal=null;await load();state.view='documents';render();toast('書類を送付しました')});
   $('#newsForm')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);await api('/api/news',{method:'POST',body:JSON.stringify({category:f.get('category'),title:f.get('title'),body:f.get('body'),important:!!f.get('important'),image_url:''})});state.modal=null;await load();state.view='news';render();toast('お知らせを配信しました')});
   $('#signForm')?.addEventListener('submit',async e=>{e.preventDefault();const c=$('#signatureCanvas');if(!c.dataset.drawn)return toast('サインを入力してください');const f=new FormData(e.target);await api(`/api/documents/${f.get('id')}/sign`,{method:'POST',body:JSON.stringify({signer_name:f.get('signer_name'),signature_data:c.toDataURL('image/png'),consent:!!f.get('consent')})});state.modal=null;await load();state.view='documents';render();toast('署名しました')});
@@ -58,7 +81,7 @@ function bind(){
   $$('[data-invoice]').forEach(b=>b.onclick=()=>{state.modal={type:'invoice',oid:Number(b.dataset.invoice)};render()}); $('#invoiceForm')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target),o=(state.data.caredo.orders||[]).find(x=>x.id==f.get('order_id'));await api('/api/invoices',{method:'POST',body:JSON.stringify({order_id:Number(f.get('order_id')),invoice_no:f.get('invoice_no'),invoice_date:f.get('invoice_date'),items:o.items.map(x=>({product_id:x.product_id,qty:x.received_qty||x.qty,unit_price:x.unit_price}))})});state.modal=null;await load();state.view='procurement';render();toast('請求書を作成し3点照合しました')});
   $$('[data-export]').forEach(a=>a.onclick=e=>{e.preventDefault();fetch(a.href,{headers:{Authorization:'Bearer '+state.token}}).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b),x=document.createElement('a');x.href=u;x.download=`ittokai_${a.dataset.export}.csv`;x.click();URL.revokeObjectURL(u)})});
   $$('[data-receive]').forEach(b=>b.onclick=async()=>{const o=(state.data.procurement?.orders||[]).find(x=>x.id==b.dataset.receive);if(!o)return;const items=o.items.map(x=>({item_id:x.id,received_qty:Number(prompt(`${x.name} 受領数量`,x.qty)??x.qty)}));await api(`/api/orders/${o.id}/receive`,{method:'POST',body:JSON.stringify({items})});await load();state.view='procurement';render();toast('検品・受領を記録しました')});
-  $$('[data-invoice-pdf]').forEach(b=>b.onclick=()=>window.open(`/api/invoices/${b.dataset.invoicePdf}/pdf`,'_blank'));
+  $$('[data-invoice-pdf]').forEach(b=>b.onclick=()=>openProtectedPdf(`/api/invoices/${b.dataset.invoicePdf}/pdf`,'ITTOKAI 請求書PDF'));
   $('#productMasterForm')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target),o=Object.fromEntries(f);['standard_price'].forEach(k=>o[k]=Number(o[k]));['min_order_qty','lead_time_days'].forEach(k=>o[k]=Number(o[k]));await api('/api/products',{method:'POST',body:JSON.stringify(o)});await load();state.view='procurement';render();toast('商品を登録しました')});
   $$('.import-form').forEach(form=>form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form);try{const r=await api('/api/import/'+form.dataset.kind,{method:'POST',body:fd});toast(`${r.count}件取り込みました`);if(r.warnings?.length)alert('警告\n'+r.warnings.join('\n'));await load();state.view='integrations';render()}catch(err){toast(err.message)}});
 }
@@ -67,6 +90,6 @@ function setupSignature(){setTimeout(()=>{const c=$('#signatureCanvas');if(!c)re
 function bindSlots(){$$('[data-book]').forEach(b=>b.onclick=async()=>{const x=JSON.parse(b.dataset.book);const representative=prompt('来訪代表者名を入力してください',state.data.user.name);if(!representative)return;const count=Number(prompt('来訪人数',1)||1);await api('/api/visits',{method:'POST',body:JSON.stringify({...x,visitor_count:count,representative,phone:'',notes:''})});await load();state.view='visits';render();toast('面会予約を登録しました')})}
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();state.installPrompt=e});
 window.addEventListener('popstate',e=>{if(e.state?.view)setView(e.state.view)});
-if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js?v=20').catch(()=>{});
+if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js?v=20.1').catch(()=>{});
 setTimeout(()=>$('#startup')?.classList.add('hide'),550);
 if(state.token)load();else render();

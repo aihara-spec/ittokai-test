@@ -328,11 +328,11 @@ def make_document_pdf(s, doc: Document, rec: Optional[DocumentRecipient]=None):
     return evidence
 
 # ------------------ App ------------------
-app=FastAPI(title='ITTOKAI v20 Integrated',version='20.0')
+app=FastAPI(title='ITTOKAI v20.1 Integrated',version='20.1')
 Base.metadata.create_all(bind=engine); seed_data()
 
 @app.get('/health')
-def health(): return {'ok':True,'version':'20.0','database':'postgresql' if DATABASE_URL.startswith('postgresql') else 'sqlite'}
+def health(): return {'ok':True,'version':'20.1','database':'postgresql' if DATABASE_URL.startswith('postgresql') else 'sqlite'}
 
 class LoginIn(BaseModel): email:str; password:str
 @app.post('/api/login')
@@ -354,7 +354,7 @@ def bootstrap(request:Request):
     with SessionLocal() as s:
         u=current_user(request,s)
         fac=s.get(Facility,u.facility_id) if u.facility_id else None
-        data={'user':user_json(u),'facility':facility_json(fac) if fac else None,'role_labels':ROLE_LABEL,'version':'20.0','targets':{'facilities':50,'staff':1000,'middle_managers':200,'admins':50,'families':2000,'sponsors':100}}
+        data={'user':user_json(u),'facility':facility_json(fac) if fac else None,'role_labels':ROLE_LABEL,'version':'20.1','targets':{'facilities':50,'staff':1000,'middle_managers':200,'admins':50,'families':2000,'sponsors':100}}
         data['notifications']=[{'id':n.id,'title':n.title,'body':n.body,'module':n.module,'entity_id':n.entity_id,'created_at':dt_iso(n.created_at),'read_at':dt_iso(n.read_at)} for n in s.query(Notification).filter_by(user_id=u.id).order_by(Notification.id.desc()).limit(30).all()]
         if u.role=='family':
             links=s.query(FamilyLink,Resident).join(Resident,FamilyLink.resident_id==Resident.id).filter(FamilyLink.user_id==u.id).all(); resident_ids=[r.id for _,r in links]
