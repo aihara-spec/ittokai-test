@@ -1,0 +1,3 @@
+ITTOKAI v20.0 Integrated
+Build date: 2026-09-22
+Scope: specification sections 1-6 integrated staging build

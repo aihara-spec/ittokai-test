@@ -1,0 +1,2 @@
+facility_code,sku,location,on_hand,safety_stock,reorder_point,target_stock,avg_daily_usage,purchase_price,sale_price
+MAISON-NINOMIYA,CD-OM-M,主倉庫,2,3,4,8,0.3,2384,2980

@@ -1,0 +1,13 @@
+# Render / local
+PORT=8000
+
+# Supabase PostgreSQL (本番・ステージング)
+# Supabase > Project Settings > Database > Connection string を使用
+DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/postgres
+
+# LINE Messaging API（自動通知を有効にするとき）
+LINE_CHANNEL_ACCESS_TOKEN=
+
+# 将来の外部電子契約API
+E_SIGN_PROVIDER=
+E_SIGN_API_KEY=

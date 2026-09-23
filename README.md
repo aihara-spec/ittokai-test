@@ -1,57 +1,85 @@
-## v12 飛翔ブランド
-飛翔・前進・未来をイメージしたオレンジの翼ロゴへ全面変更しました。
+# ITTOKAI v20 Integrated
 
-# ITTOKAI v15 - 社内テスト版
+ITTOKAIを「家族連絡アプリ」から、家族・職員・施設・株式会社ケア・ドゥ・既存業務ソフトをつなぐ統合業務プラットフォームへ拡張した実装版です。
 
-## 今回の修正
-- お知らせ：管理者が配信すると家族側へ約2秒以内に自動反映
-- ショップ：新しい商品も約2秒以内に自動反映
-- 協賛企業管理：会社名、担当者、連絡先、会社URL、購入URL、備考を登録可能
-- 商品登録：登録済みの協賛企業を選択可能。購入URLを自動利用
-- 操作マニュアル：アプリのマイページから閲覧可能
+## 実装済み
 
-## 起動
-`1_START_APP.bat` をダブルクリックしてください。
+- 7ロールRBAC: 家族 / 一般職員 / 中間管理職（チーフ・リーダー・マネージャー） / 施設管理者 / 法人本部 / ケア・ドゥ / 外部協賛企業
+- 家族↔施設チャット / 既読
+- お知らせ
+- 電子書類 v2: 送付、閲覧、同意、手書き署名、署名済PDF、ハッシュ、監査ログ
+- 職員申請: 有給 / 残業 / 勤務変更、2段階承認、差戻し・履歴
+- 面会予約: 施設別・曜日別・時間枠、容量、予約・取消、施設側ルール設定
+- ケア・ドゥ: 商品、施設別価格、在庫、安全在庫、発注候補、発注、受注、出荷、納品、請求、3点照合
+- CSV連携: ほのぼの / クロノス / 弥生
+- CSV一括登録: 施設、職員、利用者・家族、ケア・ドゥ商品、施設在庫・価格
+- LINE Messaging API用通知アダプタ（アクセストークン設定時）
+- 監査ログ
+- PWA / スマホホーム画面追加
+- PostgreSQL(Supabase)対応。DATABASE_URL未設定時はSQLiteテストDB
 
-## デモID
-家族：family@ittokai.local / demo1234
-管理者：admin@ittokai.local / admin1234
+## テストアカウント
 
-## マニュアル
-- ITTOKAI_Manual_v15.html
-- アプリ内：マイページ → 操作マニュアル
+- 家族: `family@ittokai.local` / `demo1234`
+- 一般職員: `staff@ittokai.local` / `staff1234`
+- 中間管理職: `manager@ittokai.local` / `manager1234`
+- 施設管理者: `admin@ittokai.local` / `admin1234`
+- 法人本部: `hq@ittokai.local` / `hq1234`
+- ケア・ドゥ: `caredo@ittokai.local` / `caredo1234`
+- 外部協賛企業: `sponsor@ittokai.local` / `sponsor1234`
 
-## 社内テスト推奨
-管理者スマホと家族スマホの2台で、お知らせ・ショップ・トークを確認してください。
+## Windowsで起動
 
-## v11 Orange Brand Theme
-- Main brand color changed to orange.
-- Selected states use teal for clear visual contrast.
-- App icon, PWA icon, favicon, startup splash and major UI accents updated to orange.
+`1_START_LOCAL.bat` をダブルクリック。
 
+または:
 
-## v13 Brand
-- メインブランド: 飛翔ロゴ / Orange × Black
-- オレンジアイコンをPWA・iPhone・Android・LINE用の標準に設定
-- 黒アイコンは代替チャネルアイコンとして同梱
-- LIFF QR: https://liff.line.me/2011515301-9Xriwevd
+```bash
+pip install -r requirements.txt
+python server.py
+```
 
+ブラウザ: http://localhost:8000
 
-## v14 ケア・ドゥ公式ショップ連携
-- 家族側「ショップ」とホームの「商品を購入」から https://caredo-zakka.jp/shop/ へ直接移動します。
-- 管理者側の商品・協賛企業管理機能は残しています。
-- 管理者ショップ画面からもケア・ドゥ公式ショップへ移動できます。
+## Render
 
+Build Command:
 
-## v15 電子書類・手書きサイン
-- 管理者から家族へ契約書・同意書等を送付
-- 家族側に「書類」メニューを追加
-- 未確認 / 閲覧済・署名待ち / 署名済みを管理
-- スマホ画面に手書きサイン
-- 署名者氏名、署名日時、文書ハッシュ、署名データハッシュ、端末情報を記録
-- 署名済みPDFを自動生成し、施設・家族双方から表示・保存可能
-- 操作履歴（送付・閲覧・署名・PDF出力）を記録
-- 写真掲載同意、個人情報取扱同意、重要事項説明確認のテンプレートを搭載
+```text
+pip install -r requirements.txt
+```
 
-### 注意
-現段階は社内テスト用の簡易電子署名です。Render無料版のSQLiteは永続保存が保証されません。正式な契約運用前に永続DB、本人確認、バックアップ、必要に応じて外部電子契約サービス連携を実施してください。
+Start Command:
+
+```text
+python server.py
+```
+
+Health Check: `/health`
+
+## Supabase/PostgreSQL
+
+RenderのEnvironmentに `DATABASE_URL` を設定するとPostgreSQLへ切り替わります。
+詳細は `SUPABASE_SETUP.md` を参照してください。
+
+## 既存ソフト連携
+
+今回の版では、製品・契約・バージョン差の影響を受けにくいよう、最初にCSVアダプタを実装しています。
+
+- ほのぼの: 利用者・施設・契約/請求関連のCSV/API接続口
+- クロノス: 承認済み有給・残業・勤務変更のCSV出力
+- 弥生: ケア・ドゥ請求・売上・会計連携用CSV出力
+
+実際のAPI自動連携は、各製品の契約プラン・API仕様・CSVレイアウト確定後にアダプタを差し替えます。
+
+## 本番前の必須事項
+
+1. Supabase/PostgreSQLへ移行
+2. 管理者MFA
+3. 正式なプライバシーポリシー・利用規約
+4. バックアップ・復元テスト
+5. LINE公式アカウントMessaging API設定
+6. 本人確認・重要契約の電子契約方式を法務/顧問と確定
+7. ほのぼの・クロノス・弥生の実CSV/API仕様確定
+8. デフォルトパスワード変更
+9. 実データ投入前に権限テスト

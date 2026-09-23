@@ -1,3 +1,9 @@
-qrcode>=7.4
-Pillow>=10.0
-reportlab>=4.0
+fastapi>=0.116,<1
+uvicorn>=0.35,<1
+sqlalchemy>=2.0,<3
+psycopg[binary]>=3.2,<4
+python-multipart>=0.0.20,<1
+reportlab>=4.4,<5
+pypdf>=5,<7
+pillow>=11,<12
+qrcode>=8,<9

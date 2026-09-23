@@ -1,0 +1,4 @@
+employee_code,name,email,role,facility_code,department_code
+E0001,一般職員テスト,staff@ittokai.local,staff,MAISON-NINOMIYA,ADMISSION
+M0001,中間管理職テスト,manager@ittokai.local,middle_manager,MAISON-NINOMIYA,ADMISSION
+A0001,施設管理者,admin@ittokai.local,admin,MAISON-NINOMIYA,ADMIN

@@ -1,0 +1,2 @@
+facility_code,weekday,place_name,start_time,end_time,slot_minutes,capacity,max_visitors,booking_days_ahead,cutoff_hours,approval_mode
+MAISON-NINOMIYA,0,面会室A,14:00,17:00,30,2,4,30,24,auto
