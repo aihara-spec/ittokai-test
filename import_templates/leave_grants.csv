@@ -1,0 +1,3 @@
+employee_code,grant_date,granted_days,remaining_days,taken_days,expires_on,note
+E0001,2025-04-01,20,6,14,2027-03-31,前回付与
+E0001,2026-04-01,20,18,2,2028-03-31,今回付与

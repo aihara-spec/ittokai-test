@@ -1,0 +1,35 @@
+{
+  "version": "20.5",
+  "target": {
+    "facilities": 50,
+    "staff": 1000,
+    "families": 2000
+  },
+  "actual": {
+    "facilities": 50,
+    "staff": 1000,
+    "families": 2000,
+    "leave_grants": 1994,
+    "work_time_rows": 5982
+  },
+  "timing_seconds": {
+    "seed": 1.479,
+    "labor_50_facilities": 0.832
+  },
+  "alerts_detected": 1997,
+  "expiring_leave_days": 4953.0,
+  "hq": {
+    "facilities": 50,
+    "users": 3003,
+    "families": 2000,
+    "staff": 1000,
+    "middle_managers": 199,
+    "admins": 50,
+    "documents_pending": 1,
+    "workflow_pending": 0,
+    "visits_upcoming": 0,
+    "orders_open": 0
+  },
+  "issues": [],
+  "result": "PASS"
+}
