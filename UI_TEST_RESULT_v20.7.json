@@ -1,0 +1,8 @@
+{
+  "version": "20.7",
+  "roles_tested": 7,
+  "ui_transitions": 105,
+  "chat_thread_checks": 4,
+  "errors": [],
+  "result": "PASS"
+}

@@ -1,13 +1,30 @@
 # Render / local
 PORT=8000
 
-# Supabase PostgreSQL (本番・ステージング)
-# Supabase > Project Settings > Database > Connection string を使用
+# Supabase PostgreSQL (production/staging)
+# Supabase > Project Settings > Database > Connection string
 DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/postgres
 
-# LINE Messaging API（自動通知を有効にするとき）
-LINE_CHANNEL_ACCESS_TOKEN=
+# Public base URL used in LINE deep links
+APP_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com
 
-# 将来の外部電子契約API
+# LINE Messaging API / LIFF
+# Keep the access token secret. Do not commit a real token.
+LINE_CHANNEL_ACCESS_TOKEN=
+# Channel ID of the LINE Login channel used by the LIFF app (not the LIFF ID).
+LINE_LOGIN_CHANNEL_ID=
+# LIFF app ID shown in LINE Developers Console.
+LIFF_ID=
+# Usually https://liff.line.me/<LIFF_ID>
+LIFF_BASE_URL=
+
+# Scheduled reminders. Generate a long random value and use the same value
+# in the web service and the Render Cron Job.
+NOTIFICATION_CRON_SECRET=
+
+# Test only. Never enable in production.
+LINE_MOCK_MODE=0
+
+# Future external e-sign provider
 E_SIGN_PROVIDER=
 E_SIGN_API_KEY=

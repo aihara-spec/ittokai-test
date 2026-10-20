@@ -9,3 +9,17 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.7
+      - key: APP_BASE_URL
+        value: https://ittokai-test.onrender.com
+      - key: LIFF_ID
+        value: 2011515301-9Xriwevd
+      - key: LIFF_BASE_URL
+        value: https://liff.line.me/2011515301-9Xriwevd
+      - key: LINE_MOCK_MODE
+        value: "0"
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        sync: false
+      - key: LINE_LOGIN_CHANNEL_ID
+        sync: false
+      - key: NOTIFICATION_CRON_SECRET
+        sync: false

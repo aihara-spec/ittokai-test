@@ -1,5 +1,6 @@
-import os, io, csv, json, base64, hashlib, hmac, secrets, urllib.request
+import os, io, csv, json, base64, hashlib, hmac, secrets, urllib.request, urllib.parse, urllib.error
 from PIL import Image as PILImage
+from openpyxl import Workbook, load_workbook
 from pypdf import PdfReader, PdfWriter
 from datetime import datetime, timedelta, timezone, date, time
 from typing import Optional
@@ -106,6 +107,32 @@ class Notification(Base):
     __tablename__='notifications'
     id=Column(Integer, primary_key=True); user_id=Column(Integer, ForeignKey('users.id'), index=True); title=Column(String(240)); body=Column(Text); module=Column(String(80)); entity_id=Column(String(80), default=''); read_at=Column(DateTime, nullable=True); created_at=Column(DateTime, default=now_dt)
 
+class NotificationEvent(Base):
+    __tablename__='notification_events'
+    id=Column(Integer, primary_key=True); event_key=Column(String(240), unique=True, index=True); event_type=Column(String(100), index=True); module=Column(String(80), index=True); entity_id=Column(String(80), default='', index=True); facility_id=Column(Integer, nullable=True, index=True); actor_id=Column(Integer, nullable=True); title=Column(String(240)); body=Column(Text); metadata_json=Column(Text, default='{}'); created_at=Column(DateTime, default=now_dt, index=True)
+
+class NotificationRule(Base):
+    __tablename__='notification_rules'
+    id=Column(Integer, primary_key=True); event_type=Column(String(100), index=True); recipient_role=Column(String(40), default='*', index=True); app_enabled=Column(Integer, default=1); line_enabled=Column(Integer, default=1); repeat_after_hours=Column(Integer, default=24); deadline_before_hours=Column(Integer, default=72); active=Column(Integer, default=1); updated_at=Column(DateTime, default=now_dt)
+    __table_args__=(UniqueConstraint('event_type','recipient_role', name='uq_notification_rule_event_role'),)
+
+class NotificationDelivery(Base):
+    __tablename__='notification_deliveries'
+    id=Column(Integer, primary_key=True); event_id=Column(Integer, ForeignKey('notification_events.id'), index=True); user_id=Column(Integer, ForeignKey('users.id'), index=True); channel=Column(String(20), index=True); status=Column(String(40), index=True); attempts=Column(Integer, default=0); deep_link=Column(Text, default=''); last_error=Column(Text, default=''); sent_at=Column(DateTime, nullable=True); created_at=Column(DateTime, default=now_dt); updated_at=Column(DateTime, default=now_dt)
+    __table_args__=(UniqueConstraint('event_id','user_id','channel', name='uq_notification_delivery_event_user_channel'),)
+
+class LineAccountLink(Base):
+    __tablename__='line_account_links'
+    id=Column(Integer, primary_key=True); user_id=Column(Integer, ForeignKey('users.id'), unique=True, index=True); line_user_id=Column(String(120), unique=True, index=True); verified=Column(Integer, default=1); active=Column(Integer, default=1); linked_at=Column(DateTime, default=now_dt); updated_at=Column(DateTime, default=now_dt)
+
+class CustomerOrder(Base):
+    __tablename__='customer_orders'
+    id=Column(Integer, primary_key=True); order_no=Column(String(80), unique=True, index=True); family_user_id=Column(Integer, ForeignKey('users.id'), index=True); facility_id=Column(Integer, ForeignKey('facilities.id'), index=True); resident_id=Column(Integer, ForeignKey('residents.id'), nullable=True, index=True); merchant_type=Column(String(20), index=True); supplier_id=Column(Integer, nullable=True, index=True); store_id=Column(Integer, nullable=True, index=True); status=Column(String(40), default='submitted', index=True); total_amount=Column(Float, default=0); gift_message=Column(Text, default=''); delivery_date=Column(String(10), default=''); created_at=Column(DateTime, default=now_dt); accepted_at=Column(DateTime, nullable=True); shipped_at=Column(DateTime, nullable=True); delivered_at=Column(DateTime, nullable=True); cancelled_at=Column(DateTime, nullable=True); updated_at=Column(DateTime, default=now_dt)
+
+class CustomerOrderItem(Base):
+    __tablename__='customer_order_items'
+    id=Column(Integer, primary_key=True); order_id=Column(Integer, ForeignKey('customer_orders.id'), index=True); product_kind=Column(String(20)); product_id=Column(Integer, index=True); sku=Column(String(80)); name=Column(String(240)); qty=Column(Float, default=1); unit_price=Column(Float, default=0)
+
 class Message(Base):
     __tablename__='messages'
     id=Column(Integer, primary_key=True); facility_id=Column(Integer, index=True); family_user_id=Column(Integer, index=True); sender_id=Column(Integer, nullable=True); sender_name=Column(String(160)); sender_role=Column(String(40)); body=Column(Text); created_at=Column(DateTime, default=now_dt); read_at=Column(DateTime, nullable=True)
@@ -191,6 +218,28 @@ class Product(Base):
     __tablename__='products'
     id=Column(Integer, primary_key=True); supplier_id=Column(Integer, ForeignKey('suppliers.id'), index=True); sku=Column(String(80), unique=True, index=True); name=Column(String(240)); specification=Column(String(240), default=''); category=Column(String(100)); unit=Column(String(40), default='個'); pack_size=Column(Integer, default=1); tax_rate=Column(Float, default=10.0); standard_price=Column(Float, default=0); min_order_qty=Column(Integer, default=1); lead_time_days=Column(Integer, default=2); substitute_sku=Column(String(80), default=''); inventory_managed=Column(Integer, default=1); active=Column(Integer, default=1)
 
+class ProductMeta(Base):
+    __tablename__='product_meta'
+    id=Column(Integer, primary_key=True); product_id=Column(Integer, ForeignKey('products.id'), unique=True, index=True); short_message=Column(String(300), default=''); description=Column(Text, default=''); purchase_price=Column(Float, default=0); sale_price=Column(Float, default=0); recommended=Column(Integer, default=0); sale_start=Column(String(10), default=''); sale_end=Column(String(10), default=''); display_order=Column(Integer, default=0); updated_at=Column(DateTime, default=now_dt)
+
+class FacilityStockPolicy(Base):
+    __tablename__='facility_stock_policies'
+    id=Column(Integer, primary_key=True); facility_id=Column(Integer, index=True); product_id=Column(Integer, index=True); reorder_qty=Column(Float, default=0); max_stock=Column(Float, default=0); auto_order_mode=Column(String(20), default='approval'); last_ordered_at=Column(DateTime, nullable=True); last_received_at=Column(DateTime, nullable=True); updated_at=Column(DateTime, default=now_dt)
+    __table_args__=(UniqueConstraint('facility_id','product_id', name='uq_facility_stock_policy'),)
+
+class AutoOrderEvent(Base):
+    __tablename__='auto_order_events'
+    id=Column(Integer, primary_key=True); facility_id=Column(Integer, index=True); product_id=Column(Integer, index=True); order_id=Column(Integer, nullable=True, index=True); mode=Column(String(20), default='approval'); status=Column(String(40), default='pending_approval'); suggested_qty=Column(Float, default=0); on_hand_at_trigger=Column(Float, default=0); reorder_point=Column(Float, default=0); note=Column(Text, default=''); created_at=Column(DateTime, default=now_dt); resolved_at=Column(DateTime, nullable=True)
+
+class PartnerStore(Base):
+    __tablename__='partner_stores'
+    id=Column(Integer, primary_key=True); owner_user_id=Column(Integer, ForeignKey('users.id'), index=True); company_name=Column(String(200), default=''); store_name=Column(String(200)); category=Column(String(100), default='その他'); image_url=Column(Text, default=''); address=Column(String(400), default=''); phone=Column(String(80), default=''); hours=Column(String(160), default=''); closed_days=Column(String(160), default=''); delivery_area=Column(String(300), default=''); min_order_amount=Column(Float, default=0); order_cutoff=Column(String(80), default=''); delivery_methods=Column(String(240), default='施設配送'); message=Column(Text, default=''); active=Column(Integer, default=1); created_at=Column(DateTime, default=now_dt); updated_at=Column(DateTime, default=now_dt)
+
+class PartnerProduct(Base):
+    __tablename__='partner_products'
+    id=Column(Integer, primary_key=True); store_id=Column(Integer, ForeignKey('partner_stores.id'), index=True); sku=Column(String(80), index=True); name=Column(String(240)); short_message=Column(String(300), default=''); description=Column(Text, default=''); category=Column(String(100), default='ギフト'); specification=Column(String(240), default=''); unit=Column(String(40), default='個'); price=Column(Float, default=0); image_url=Column(Text, default=''); recommended=Column(Integer, default=0); active=Column(Integer, default=1); sale_start=Column(String(10), default=''); sale_end=Column(String(10), default=''); created_at=Column(DateTime, default=now_dt); updated_at=Column(DateTime, default=now_dt)
+    __table_args__=(UniqueConstraint('store_id','sku', name='uq_partner_store_sku'),)
+
 class FacilityPrice(Base):
     __tablename__='facility_prices'
     id=Column(Integer, primary_key=True); facility_id=Column(Integer, index=True); product_id=Column(Integer, index=True); purchase_price=Column(Float, default=0); sale_price=Column(Float, default=0); effective_from=Column(String(10), default=''); effective_to=Column(String(10), default='')
@@ -258,19 +307,130 @@ def facility_scope(u, facility_id):
 def audit(s, request, u, module, action, entity_type='', entity_id='', meta=None, facility_id=None):
     s.add(AuditLog(facility_id=facility_id or getattr(u,'facility_id',None), actor_id=getattr(u,'id',None), actor_name=getattr(u,'name','system'), module=module, action=action, entity_type=entity_type, entity_id=str(entity_id or ''), metadata_json=json.dumps(meta or {}, ensure_ascii=False), ip=client_ip(request), user_agent=request.headers.get('user-agent','')[:1000]))
 
-def notify(s, user_id, title, body, module, entity_id=''):
-    s.add(Notification(user_id=user_id,title=title,body=body,module=module,entity_id=str(entity_id or '')))
-    # Optional LINE Messaging API. Link a LINE user id to User.line_user_id and set token.
-    token=os.environ.get('LINE_CHANNEL_ACCESS_TOKEN','')
-    if not token: return
+APP_BASE_URL=(os.environ.get('APP_BASE_URL') or 'http://localhost:8000').rstrip('/')
+LIFF_BASE_URL=(os.environ.get('LIFF_BASE_URL') or '').rstrip('/')
+LINE_API_BASE='https://api.line.me'
+
+def _view_for_module(module,role=''):
+    if module=='documents': return 'dashboard' if role=='hq' else 'documents'
+    if module=='workflow': return 'requests'
+    if module=='visits': return 'visits'
+    if module in ('procurement','inventory'): return 'procurement'
+    if module=='shop': return 'partner' if role=='sponsor' else ('procurement' if role=='caredo' else 'shop')
+    if module=='chat': return 'talk'
+    if module=='news': return 'news'
+    return 'home'
+
+def deep_link_for_user(u,module,entity_id=''):
+    params={'view':_view_for_module(module,getattr(u,'role',''))}
+    if entity_id not in ('',None): params['entity']=str(entity_id)
+    qs=urllib.parse.urlencode(params)
+    base=LIFF_BASE_URL or APP_BASE_URL
+    return f'{base}?{qs}'
+
+def line_user_id_for(s,user_id):
+    link=s.query(LineAccountLink).filter_by(user_id=user_id,active=1,verified=1).first()
+    if link and link.line_user_id: return link.line_user_id
     u=s.get(User,user_id)
-    if not u or not u.line_user_id: return
-    payload=json.dumps({'to':u.line_user_id,'messages':[{'type':'text','text':f'{title}\n{body}'}]},ensure_ascii=False).encode('utf-8')
+    return (u.line_user_id or '') if u else ''
+
+def _line_push(line_user_id,title,body,deep_link=''):
+    if not line_user_id: return False,'LINE未連携'
+    if os.environ.get('LINE_MOCK_MODE','')=='1': return True,''
+    token=os.environ.get('LINE_CHANNEL_ACCESS_TOKEN','')
+    if not token: return False,'LINE_CHANNEL_ACCESS_TOKEN未設定'
+    text=(body or '').strip() or 'ITTOKAIに新しいお知らせがあります。'
+    if deep_link:
+        message={'type':'template','altText':title[:400], 'template':{'type':'buttons','text':text[:160], 'title':title[:40], 'actions':[{'type':'uri','label':'ITTOKAIで確認','uri':deep_link[:1000]}]}}
+    else:
+        message={'type':'text','text':f'{title}\n{text}'[:5000]}
+    payload=json.dumps({'to':line_user_id,'messages':[message]},ensure_ascii=False).encode('utf-8')
     try:
-        req=urllib.request.Request('https://api.line.me/v2/bot/message/push', data=payload, headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'}, method='POST')
-        urllib.request.urlopen(req, timeout=4).read()
-    except Exception:
-        pass
+        req=urllib.request.Request(LINE_API_BASE+'/v2/bot/message/push',data=payload,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
+        with urllib.request.urlopen(req,timeout=8) as res: res.read()
+        return True,''
+    except urllib.error.HTTPError as e:
+        try: detail=e.read().decode('utf-8','ignore')[:1000]
+        except Exception: detail=str(e)
+        return False,f'HTTP {e.code}: {detail}'
+    except Exception as e:
+        return False,str(e)[:1000]
+
+def notification_rule_for(s,event_type,role):
+    exact=s.query(NotificationRule).filter_by(event_type=event_type,recipient_role=role).first()
+    if exact: return exact
+    return s.query(NotificationRule).filter_by(event_type=event_type,recipient_role='*').first()
+
+def emit_notification_event(s,event_type,recipients,title,body,module,entity_id='',facility_id=None,actor_id=None,event_key=None,metadata=None):
+    user_ids=[]
+    for x in recipients or []:
+        try: uid=int(getattr(x,'id',x))
+        except Exception: continue
+        if uid not in user_ids: user_ids.append(uid)
+    event_key=event_key or f'{event_type}:{module}:{entity_id}:{secrets.token_hex(10)}'
+    ev=s.query(NotificationEvent).filter_by(event_key=event_key).first()
+    if ev: return {'event_id':ev.id,'deduplicated':True,'recipients':user_ids}
+    ev=NotificationEvent(event_key=event_key,event_type=event_type,module=module,entity_id=str(entity_id or ''),facility_id=facility_id,actor_id=actor_id,title=title,body=body,metadata_json=json.dumps(metadata or {},ensure_ascii=False)); s.add(ev); s.flush()
+    for uid in user_ids:
+        u=s.get(User,uid)
+        if not u or not u.active: continue
+        rule=notification_rule_for(s,event_type,u.role)
+        enabled=True if not rule else bool(rule.active)
+        app_enabled=enabled and (True if not rule else bool(rule.app_enabled))
+        line_enabled=enabled and (True if not rule else bool(rule.line_enabled))
+        link=deep_link_for_user(u,module,entity_id)
+        if app_enabled:
+            s.add(Notification(user_id=uid,title=title,body=body,module=module,entity_id=str(entity_id or '')))
+            s.add(NotificationDelivery(event_id=ev.id,user_id=uid,channel='app',status='sent',attempts=1,deep_link=link,sent_at=now_dt(),updated_at=now_dt()))
+        if line_enabled:
+            # Transactional outbox: persist the intended LINE delivery first.
+            # Actual external transmission is performed only after the business
+            # transaction has committed, so a rollback cannot leave a ghost LINE alert.
+            s.add(NotificationDelivery(event_id=ev.id,user_id=uid,channel='line',status='pending',attempts=0,deep_link=link,last_error='',sent_at=None,updated_at=now_dt()))
+    return {'event_id':ev.id,'deduplicated':False,'recipients':user_ids}
+
+def dispatch_pending_line_deliveries(limit=100):
+    # Dispatch committed LINE outbox rows. Safe to call repeatedly.
+    claimed=[]
+    with SessionLocal() as s:
+        q=(s.query(NotificationDelivery)
+           .filter(NotificationDelivery.channel=='line',NotificationDelivery.status=='pending')
+           .order_by(NotificationDelivery.id.asc()))
+        try: rows=q.with_for_update(skip_locked=True).limit(limit).all()
+        except Exception: rows=q.limit(limit).all()
+        for d in rows:
+            d.status='sending'; d.attempts=(d.attempts or 0)+1; d.updated_at=now_dt(); claimed.append(d.id)
+        if claimed: s.commit()
+    if not claimed: return {'processed':0,'sent':0,'failed':0,'skipped_unlinked':0}
+    result={'processed':0,'sent':0,'failed':0,'skipped_unlinked':0}
+    for did in claimed:
+        with SessionLocal() as s:
+            d=s.get(NotificationDelivery,did)
+            if not d or d.status!='sending': continue
+            e=s.get(NotificationEvent,d.event_id); usr=s.get(User,d.user_id)
+            if not e or not usr:
+                d.status='failed'; d.last_error='通知イベントまたは利用者が見つかりません'; d.updated_at=now_dt(); s.commit(); result['processed']+=1; result['failed']+=1; continue
+            ok,err=_line_push(line_user_id_for(s,d.user_id),e.title,e.body,d.deep_link)
+            d.status='sent' if ok else ('skipped_unlinked' if err=='LINE未連携' else 'failed')
+            d.last_error=err; d.sent_at=now_dt() if ok else None; d.updated_at=now_dt(); s.commit()
+            result['processed']+=1; result[d.status]=result.get(d.status,0)+1
+    return result
+
+def notify(s, user_id, title, body, module, entity_id=''):
+    # Backward-compatible one-recipient notification; business-critical flows use explicit event keys.
+    return emit_notification_event(s,f'{module}.generic',[user_id],title,body,module,entity_id,event_key=f'{module}.generic:{entity_id}:{user_id}:{secrets.token_hex(8)}')
+
+def users_by_roles(s,roles,facility_id=None,department_id=None):
+    q=s.query(User).filter(User.role.in_(list(roles)),User.active==1)
+    if facility_id is not None: q=q.filter(User.facility_id==facility_id)
+    if department_id is not None: q=q.filter((User.department_id==department_id)|(User.department_id.is_(None)))
+    return q.all()
+
+def ensure_notification_rules(s):
+    event_types=['document.requested','document.signed','document.reminder','workflow.submitted','workflow.forwarded','workflow.result','visit.requested','visit.confirmed','visit.cancelled','procurement.order_submitted','procurement.order_status','procurement.invoice_created','inventory.auto_order_candidate','inventory.auto_order_created','shop.order_submitted','shop.order_status','chat.new_message']
+    for et in event_types:
+        if not s.query(NotificationRule).filter_by(event_type=et,recipient_role='*').first(): s.add(NotificationRule(event_type=et,recipient_role='*',app_enabled=1,line_enabled=1,repeat_after_hours=24,deadline_before_hours=72,active=1))
+    s.flush()
 
 def user_json(u):
     return {'id':u.id,'name':u.name,'email':u.email,'role':u.role,'role_label':ROLE_LABEL.get(u.role,u.role),'facility_id':u.facility_id,'department_id':u.department_id,'employee_code':u.employee_code}
@@ -322,6 +482,15 @@ def seed_data():
         for i,p in enumerate(products):
             s.add(FacilityPrice(facility_id=fac.id,product_id=p.id,purchase_price=p.standard_price*0.8,sale_price=p.standard_price))
             s.add(Inventory(facility_id=fac.id,product_id=p.id,on_hand=[2,8,3][i],safety_stock=[3,4,5][i],reorder_point=[4,5,6][i],target_stock=[8,10,12][i],avg_daily_usage=[0.3,0.2,0.5][i]))
+            s.add(ProductMeta(product_id=p.id,short_message=['毎日のケアに。必要な分を施設へ直接お届け。','毎日使うものだから、施設へのまとめ買いがおすすめ。','衛生管理の定番。必要なタイミングで確実に補充。'][i],purchase_price=p.standard_price*0.8,sale_price=p.standard_price,recommended=1 if i<2 else 0,display_order=i+1))
+            s.add(FacilityStockPolicy(facility_id=fac.id,product_id=p.id,reorder_qty=[6,10,10][i],max_stock=[10,20,15][i],auto_order_mode='approval'))
+        flower=PartnerStore(owner_user_id=sponsor.id,company_name='協賛企業サンプル',store_name='ITTOKAIフラワー',category='花屋',delivery_area='神奈川県内の対象施設',delivery_methods='施設配送',message='離れていても、大切な気持ちをお花に込めて。'); s.add(flower); s.flush()
+        s.add_all([
+            PartnerProduct(store_id=flower.id,sku='FLOWER-BIRTHDAY',name='季節のお誕生日花束',short_message='離れていても、“おめでとう”の気持ちをお花に込めて。',category='記念日・花',specification='季節のお花／メッセージカード付',price=3980,recommended=1),
+            PartnerProduct(store_id=flower.id,sku='FLOWER-ARRANGE',name='季節のフラワーアレンジ',short_message='お部屋を彩る、やさしい季節の贈りもの。',category='記念日・花',specification='施設配送対応',price=4980,recommended=1),
+        ])
+        cake=PartnerStore(owner_user_id=sponsor.id,company_name='協賛企業サンプル',store_name='ITTOKAI洋菓子店',category='ケーキ屋',delivery_area='対象施設へ配送',delivery_methods='施設配送',message='今年のお誕生日も、施設で一緒にお祝い。'); s.add(cake); s.flush()
+        s.add(PartnerProduct(store_id=cake.id,sku='CAKE-BIRTHDAY',name='記念日ホールケーキ',short_message='今年のお誕生日も、施設で一緒にお祝いしませんか？',category='記念日・ケーキ',specification='プレート・ろうそく対応',price=4500,recommended=1))
         # Integration profiles
         s.add_all([
             IntegrationProfile(system_name='honobono',display_name='ほのぼの（介護・施設請求）',mode='CSV/API',direction='bidirectional',status='template_ready',notes='利用者・契約・請求・文書保存のCSV/APIアダプタ'),
@@ -372,20 +541,26 @@ def make_document_pdf(s, doc: Document, rec: Optional[DocumentRecipient]=None):
     return evidence
 
 # ------------------ App ------------------
-app=FastAPI(title='ITTOKAI v20.5 Integrated',version='20.5')
+app=FastAPI(title='ITTOKAI v20.7 Integrated',version='20.7')
 
 @app.middleware('http')
 async def no_store_api_responses(request:Request, call_next):
     response=await call_next(request)
+    # Process only committed notification outbox rows. If the endpoint failed or
+    # rolled back, no outbox row exists and no external LINE message is sent.
+    try: dispatch_pending_line_deliveries()
+    except Exception: pass  # business response must not fail because LINE is unavailable
     if request.url.path.startswith('/api/'):
         response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma']='no-cache'
     return response
 
 Base.metadata.create_all(bind=engine); seed_data()
+with SessionLocal() as _s:
+    ensure_notification_rules(_s); _s.commit()
 
 @app.get('/health')
-def health(): return {'ok':True,'version':'20.5','database':'postgresql' if DATABASE_URL.startswith('postgresql') else 'sqlite'}
+def health(): return {'ok':True,'version':'20.7','database':'postgresql' if DATABASE_URL.startswith('postgresql') else 'sqlite'}
 
 class LoginIn(BaseModel): email:str; password:str
 @app.post('/api/login')
@@ -434,7 +609,7 @@ SYNC_ALLOWED = {
     'admin': {'documents','chat','workflow','visits','news','procurement','all'},
     'hq': {'documents','workflow','visits','news','procurement','all'},
     'caredo': {'procurement','all'},
-    'sponsor': set(),
+    'sponsor': {'procurement','all'},
 }
 
 def module_revision_value(s,u,module):
@@ -482,14 +657,29 @@ def messages_revision(request:Request,user_id:Optional[int]=None):
         u=current_user(request,s)
         return {'revision':chat_revision_value(s,u,user_id)}
 
+def notification_health_summary(s,u):
+    q=s.query(NotificationDelivery,NotificationEvent).join(NotificationEvent,NotificationDelivery.event_id==NotificationEvent.id).filter(NotificationDelivery.channel=='line')
+    if u.role=='admin': q=q.filter(NotificationEvent.facility_id==u.facility_id)
+    rows=q.order_by(NotificationDelivery.id.desc()).limit(1000).all()
+    counts={'sent':0,'failed':0,'skipped_unlinked':0,'other':0}
+    failed=[]
+    for d,e in rows:
+        if d.status in counts: counts[d.status]+=1
+        else: counts['other']+=1
+        if d.status=='failed' and len(failed)<10:
+            failed.append({'id':d.id,'event_type':e.event_type,'title':e.title,'last_error':d.last_error,'attempts':d.attempts,'created_at':dt_iso(d.created_at)})
+    return {'counts':counts,'failed':failed,'note':'LINEのsentはMessaging API受付成功を表し、端末通知・閲覧までを保証するものではありません。'}
+
 @app.get('/api/bootstrap')
 def bootstrap(request:Request):
     with SessionLocal() as s:
         u=current_user(request,s)
         fac=s.get(Facility,u.facility_id) if u.facility_id else None
-        data={'user':user_json(u),'facility':facility_json(fac) if fac else None,'role_labels':ROLE_LABEL,'version':'20.5','targets':{'facilities':50,'staff':1000,'middle_managers':200,'admins':50,'families':2000,'sponsors':100}}
+        data={'user':user_json(u),'facility':facility_json(fac) if fac else None,'role_labels':ROLE_LABEL,'version':'20.7','targets':{'facilities':50,'staff':1000,'middle_managers':200,'admins':50,'families':2000,'sponsors':100}}
         if u.role in ('family','admin','hq'): data['document_revision']=document_revision_value(s,u)
-        data['notifications']=[{'id':n.id,'title':n.title,'body':n.body,'module':n.module,'entity_id':n.entity_id,'created_at':dt_iso(n.created_at),'read_at':dt_iso(n.read_at)} for n in s.query(Notification).filter_by(user_id=u.id).order_by(Notification.id.desc()).limit(30).all()]
+        data['notifications']=[{'id':n.id,'title':n.title,'body':n.body,'module':n.module,'entity_id':n.entity_id,'created_at':dt_iso(n.created_at),'read_at':dt_iso(n.read_at),'deep_link':deep_link_for_user(u,n.module,n.entity_id)} for n in s.query(Notification).filter_by(user_id=u.id).order_by(Notification.id.desc()).limit(30).all()]
+        data['line_notification']={'linked':bool(line_user_id_for(s,u.id)),'line_user_id_masked':(('***'+line_user_id_for(s,u.id)[-6:]) if line_user_id_for(s,u.id) else ''),'liff_id':os.environ.get('LIFF_ID',''),'mock_mode':os.environ.get('LINE_MOCK_MODE','')=='1'}
+        if u.role in ('admin','hq'): data['notification_health']=notification_health_summary(s,u)
         if u.role=='family':
             links=s.query(FamilyLink,Resident).join(Resident,FamilyLink.resident_id==Resident.id).filter(FamilyLink.user_id==u.id).all(); resident_ids=[r.id for _,r in links]
             data['residents']=[{'id':r.id,'name':r.name,'facility_id':r.facility_id,'service_type':r.service_type,'relation':l.relation} for l,r in links]
@@ -501,7 +691,9 @@ def bootstrap(request:Request):
             sup=s.query(Supplier).filter_by(code='CAREDO').first()
             if sup:
                 prods=s.query(Product).filter_by(supplier_id=sup.id,active=1).limit(8).all()
-                data['shop_recommendations']=[{'id':p.id,'sku':p.sku,'name':p.name,'category':p.category,'specification':p.specification,'price':p.standard_price,'unit':p.unit,'image_url':f'/api/products/{p.id}/image'} for p in prods]
+                data['shop_recommendations']=[product_public_json(s,p) for p in prods]
+            data['gift_recommendations']=partner_public_products(s,limit=12)
+            data['customer_orders']=customer_orders_for_family(s,u.id)
         elif u.role in ('staff','middle_manager','admin'):
             data['news']=[{'id':n.id,'category':n.category,'title':n.title,'body':n.body,'important':n.important,'image_url':n.image_url,'created_at':dt_iso(n.created_at)} for n in s.query(News).filter_by(facility_id=u.facility_id).order_by(News.id.desc()).limit(30)]
             data['family_users']=family_users_for_facility(s,u.facility_id)
@@ -512,16 +704,153 @@ def bootstrap(request:Request):
             if u.role in ('middle_manager','admin'):
                 data['approval_queue']=workflow_list(s,u,approval=True)
                 data['facility_labor']=facility_labor_summary(s,u)
+                data['procurement']=procurement_snapshot(s,u.facility_id)
             if u.role=='admin':
-                data['documents']=document_list_for_facility(s,u.facility_id); data['contract_cards']=contract_cards_for_facility(s,u.facility_id); data['visit_rules']=visit_rules_for_facility(s,u.facility_id); data['procurement']=procurement_snapshot(s,u.facility_id)
+                data['documents']=document_list_for_facility(s,u.facility_id); data['contract_cards']=contract_cards_for_facility(s,u.facility_id); data['visit_rules']=visit_rules_for_facility(s,u.facility_id)
         elif u.role=='hq':
             data['dashboard']=hq_dashboard(s); data['facilities']=[facility_json(f) for f in s.query(Facility).filter_by(active=1).all()]; data['integrations']=integration_list(s)
         elif u.role=='caredo':
             data['caredo']=caredo_snapshot(s)
         elif u.role=='sponsor':
-            data['sponsor']={'message':'外部協賛企業ポータル。利用者個人情報・介護情報は表示しません。','shop_url':'https://caredo-zakka.jp/shop/'}
+            data['sponsor']=sponsor_snapshot(s,u)
         data['sync_revisions']={m:module_revision_value(s,u,m) for m in SYNC_ALLOWED.get(u.role,set()) if m!='chat'}
         return data
+
+# -------- unified notifications / LINE --------
+class LineLinkIn(BaseModel):
+    id_token:str
+
+def _verify_line_id_token(raw):
+    if os.environ.get('LINE_MOCK_MODE','')=='1' and raw.startswith('mock:'):
+        return {'sub':raw.split(':',1)[1] or 'U-MOCK'}
+    client_id=os.environ.get('LINE_LOGIN_CHANNEL_ID') or os.environ.get('LIFF_CHANNEL_ID')
+    if not client_id: raise HTTPException(503,'LINE_LOGIN_CHANNEL_IDが未設定です')
+    data=urllib.parse.urlencode({'id_token':raw,'client_id':client_id}).encode('utf-8')
+    try:
+        req=urllib.request.Request(LINE_API_BASE+'/oauth2/v2.1/verify',data=data,headers={'Content-Type':'application/x-www-form-urlencoded'},method='POST')
+        with urllib.request.urlopen(req,timeout=8) as res: out=json.loads(res.read().decode('utf-8'))
+    except Exception as e:
+        raise HTTPException(400,'LINE IDトークンを検証できません') from e
+    if not out.get('sub'): raise HTTPException(400,'LINEユーザーIDを確認できません')
+    return out
+
+@app.get('/api/line/config')
+def line_config():
+    return {'liff_id':os.environ.get('LIFF_ID',''),'enabled':bool(os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')),'mock_mode':os.environ.get('LINE_MOCK_MODE','')=='1'}
+
+@app.post('/api/line/link')
+def line_link(inp:LineLinkIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); profile=_verify_line_id_token(inp.id_token); line_id=profile['sub']
+        conflict=s.query(LineAccountLink).filter(LineAccountLink.line_user_id==line_id,LineAccountLink.user_id!=u.id,LineAccountLink.active==1).first()
+        if conflict: raise HTTPException(409,'このLINEアカウントは別のITTOKAIアカウントに連携済みです')
+        stale=s.query(LineAccountLink).filter(LineAccountLink.line_user_id==line_id,LineAccountLink.user_id!=u.id,LineAccountLink.active==0).first()
+        if stale: stale.line_user_id=None; stale.updated_at=now_dt()
+        link=s.query(LineAccountLink).filter_by(user_id=u.id).first() or LineAccountLink(user_id=u.id,line_user_id=line_id)
+        link.line_user_id=line_id; link.verified=1; link.active=1; link.updated_at=now_dt(); s.add(link); u.line_user_id=line_id
+        audit(s,request,u,'notifications','line_link','user',u.id,{},u.facility_id); s.commit(); return {'ok':True,'linked':True}
+
+@app.post('/api/line/unlink')
+def line_unlink(request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); link=s.query(LineAccountLink).filter_by(user_id=u.id).first()
+        if link: link.active=0; link.updated_at=now_dt()
+        u.line_user_id=''; audit(s,request,u,'notifications','line_unlink','user',u.id,{},u.facility_id); s.commit(); return {'ok':True,'linked':False}
+
+@app.post('/api/notifications/{nid}/read')
+def notification_read(nid:int,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); n=s.get(Notification,nid)
+        if not n or n.user_id!=u.id: raise HTTPException(404,'通知がありません')
+        if not n.read_at: n.read_at=now_dt(); s.commit()
+        return {'ok':True}
+
+@app.get('/api/notifications/deliveries')
+def notification_deliveries(request:Request,status:Optional[str]=None):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'admin','hq')
+        q=s.query(NotificationDelivery,NotificationEvent,User).join(NotificationEvent,NotificationDelivery.event_id==NotificationEvent.id).join(User,NotificationDelivery.user_id==User.id)
+        if u.role=='admin': q=q.filter(NotificationEvent.facility_id==u.facility_id)
+        if status: q=q.filter(NotificationDelivery.status==status)
+        items=[]
+        for d,e,usr in q.order_by(NotificationDelivery.id.desc()).limit(500):
+            items.append({'id':d.id,'event_id':e.id,'event_type':e.event_type,'title':e.title,'user_id':usr.id,'user_name':usr.name,'role':usr.role,'channel':d.channel,'status':d.status,'attempts':d.attempts,'deep_link':d.deep_link,'last_error':d.last_error,'sent_at':dt_iso(d.sent_at),'created_at':dt_iso(d.created_at)})
+        return {'items':items}
+
+@app.post('/api/notifications/retry-failed')
+def retry_failed_notifications(request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'admin','hq')
+        q=s.query(NotificationDelivery).filter(NotificationDelivery.channel=='line',NotificationDelivery.status=='failed')
+        if u.role=='admin': q=q.join(NotificationEvent,NotificationDelivery.event_id==NotificationEvent.id).filter(NotificationEvent.facility_id==u.facility_id)
+        count=0
+        for d in q.limit(100).all():
+            e=s.get(NotificationEvent,d.event_id); usr=s.get(User,d.user_id); ok,err=_line_push(line_user_id_for(s,d.user_id),e.title,e.body,d.deep_link)
+            d.attempts=(d.attempts or 0)+1; d.updated_at=now_dt(); d.last_error=err; d.status='sent' if ok else ('skipped_unlinked' if err=='LINE未連携' else 'failed'); d.sent_at=now_dt() if ok else d.sent_at; count+=1
+        audit(s,request,u,'notifications','retry_failed','notification_delivery','',{'count':count},u.facility_id); s.commit(); return {'ok':True,'retried':count}
+
+class NotificationRuleIn(BaseModel):
+    event_type:str; recipient_role:str='*'; app_enabled:bool=True; line_enabled:bool=True; repeat_after_hours:int=24; deadline_before_hours:int=72; active:bool=True
+
+@app.get('/api/notifications/rules')
+def notification_rules(request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'admin','hq')
+        rows=s.query(NotificationRule).order_by(NotificationRule.event_type,NotificationRule.recipient_role).all()
+        return {'items':[{'id':x.id,'event_type':x.event_type,'recipient_role':x.recipient_role,'app_enabled':bool(x.app_enabled),'line_enabled':bool(x.line_enabled),'repeat_after_hours':x.repeat_after_hours,'deadline_before_hours':x.deadline_before_hours,'active':bool(x.active)} for x in rows]}
+
+@app.post('/api/notifications/rules')
+def notification_rule_save(inp:NotificationRuleIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'admin','hq')
+        if inp.repeat_after_hours<0 or inp.deadline_before_hours<0: raise HTTPException(400,'通知時間の設定が不正です')
+        r=s.query(NotificationRule).filter_by(event_type=inp.event_type,recipient_role=inp.recipient_role).first() or NotificationRule(event_type=inp.event_type,recipient_role=inp.recipient_role)
+        r.app_enabled=1 if inp.app_enabled else 0; r.line_enabled=1 if inp.line_enabled else 0; r.repeat_after_hours=inp.repeat_after_hours; r.deadline_before_hours=inp.deadline_before_hours; r.active=1 if inp.active else 0; r.updated_at=now_dt(); s.add(r)
+        audit(s,request,u,'notifications','rule_save','notification_rule',r.id or '',{'event_type':inp.event_type,'recipient_role':inp.recipient_role},u.facility_id); s.commit(); return {'ok':True}
+
+def _scheduled_reminder_allowed(s,event_type,module,entity_id,user_id,repeat_hours):
+    repeat_hours=max(1,int(repeat_hours or 24))
+    last=(s.query(NotificationEvent).join(NotificationDelivery,NotificationDelivery.event_id==NotificationEvent.id)
+          .filter(NotificationEvent.event_type==event_type,NotificationEvent.module==module,NotificationEvent.entity_id==str(entity_id),NotificationDelivery.user_id==user_id)
+          .order_by(NotificationEvent.created_at.desc()).first())
+    return (not last) or ((now_dt()-last.created_at)>=timedelta(hours=repeat_hours))
+
+def run_due_reminders(s):
+    result={'documents':0,'workflows':0}
+    now=now_dt(); today=now.date()
+    for r,d in s.query(DocumentRecipient,Document).join(Document,DocumentRecipient.document_id==Document.id).filter(DocumentRecipient.signed_at.is_(None),Document.status.in_(['sent','partial_signed'])).all():
+        due=safe_date(d.due_at)
+        if not due: continue
+        usr=s.get(User,r.user_id); rule=notification_rule_for(s,'document.reminder',usr.role if usr else 'family')
+        if rule and not rule.active: continue
+        deadline_hours=(rule.deadline_before_hours if rule else 72) or 72
+        repeat_hours=(rule.repeat_after_hours if rule else 24) or 24
+        hours_to=(datetime.combine(due,time.max)-now).total_seconds()/3600
+        if 0<=hours_to<=deadline_hours and _scheduled_reminder_allowed(s,'document.reminder','documents',d.id,r.user_id,repeat_hours):
+            key=f'document.scheduled_reminder:{d.id}:{r.user_id}:{int(now.timestamp()//(max(1,repeat_hours)*3600))}'
+            z=emit_notification_event(s,'document.reminder',[r.user_id],'書類の確認期限が近づいています','ITTOKAIで未処理の書類をご確認ください。','documents',d.id,d.facility_id,None,key,{'hours_to_due':round(hours_to,1),'scheduled':True})
+            if not z['deduplicated']: result['documents']+=1
+    for w in s.query(WorkflowRequest).filter(WorkflowRequest.status.in_(['pending_manager','pending_admin'])).all():
+        role='middle_manager' if w.status=='pending_manager' else 'admin'; rec=users_by_roles(s,[role],w.facility_id,w.department_id if role=='middle_manager' else None)
+        if not rec and role=='middle_manager': rec=users_by_roles(s,['admin'],w.facility_id)
+        for usr in rec:
+            rule=notification_rule_for(s,'workflow.forwarded',usr.role); repeat_hours=(rule.repeat_after_hours if rule else 24) or 24
+            if rule and not rule.active: continue
+            if (now-w.created_at)<timedelta(hours=repeat_hours): continue
+            if not _scheduled_reminder_allowed(s,'workflow.forwarded','workflow',w.id,usr.id,repeat_hours): continue
+            key=f'workflow.scheduled_reminder:{w.id}:{usr.id}:{int(now.timestamp()//(max(1,repeat_hours)*3600))}'
+            z=emit_notification_event(s,'workflow.forwarded',[usr.id],'承認待ち申請があります','ITTOKAIで承認待ちの申請をご確認ください。','workflow',w.id,w.facility_id,None,key,{'scheduled':True})
+            if not z['deduplicated']: result['workflows']+=1
+    return result
+
+@app.post('/api/notifications/run-reminders')
+def notification_run_reminders(request:Request):
+    with SessionLocal() as s:
+        secret=os.environ.get('NOTIFICATION_CRON_SECRET',''); supplied=request.headers.get('x-ittokai-cron-secret','')
+        actor=None
+        if not (secret and hmac.compare_digest(secret,supplied)):
+            actor=current_user(request,s); require_roles(actor,'admin','hq')
+        result=run_due_reminders(s); s.commit(); return {'ok':True,**result}
 
 # -------- chat/news --------
 def family_users_for_facility(s,fid):
@@ -560,9 +889,9 @@ def post_message(inp:MsgIn,request:Request):
         m=Message(facility_id=tu.facility_id,family_user_id=target,sender_id=u.id,sender_name=u.name,sender_role=u.role,body=body); s.add(m); s.flush()
         if u.role=='family':
             recipients=s.query(User).filter(User.facility_id==tu.facility_id,User.role.in_(['middle_manager','admin']),User.active==1).all()
-            for x in recipients: notify(s,x.id,'新着トーク',body[:80],'chat',target)
+            emit_notification_event(s,'chat.new_message',recipients,'新着トークがあります','ITTOKAIでメッセージをご確認ください。','chat',target,tu.facility_id,u.id,f'chat.new_message:{m.id}:facility')
         else:
-            notify(s,target,'施設から新着トークがあります',body[:80],'chat',target)
+            emit_notification_event(s,'chat.new_message',[target],'施設から新着トークがあります','ITTOKAIでメッセージをご確認ください。','chat',target,tu.facility_id,u.id,f'chat.new_message:{m.id}:family')
         audit(s,request,u,'chat','send','message',m.id,{'target':target},tu.facility_id); s.commit(); return {'ok':True,'id':m.id}
 
 @app.post('/api/messages/read')
@@ -651,7 +980,7 @@ def create_document(inp:DocumentCreate,request:Request):
         for uid in inp.recipient_user_ids:
             ru=s.get(User,uid)
             if not ru or ru.role!='family' or ru.facility_id!=fid: continue
-            s.add(DocumentRecipient(document_id=d.id,user_id=uid,signer_role='家族',sign_order=1,status='sent')); notify(s,uid,'新しい書類があります',d.title,'documents',d.id)
+            s.add(DocumentRecipient(document_id=d.id,user_id=uid,signer_role='家族',sign_order=1,status='sent')); emit_notification_event(s,'document.requested',[uid],'確認・署名が必要な書類があります','ITTOKAIで書類をご確認ください。','documents',d.id,fid,u.id,f'document.requested:{d.id}:{uid}')
             if not resident_id:
                 fl=s.query(FamilyLink).filter_by(user_id=uid,is_primary=1).first() or s.query(FamilyLink).filter_by(user_id=uid).first()
                 if fl: link_document_resident(s,d.id,fl.resident_id)
@@ -676,7 +1005,7 @@ async def upload_document(request:Request,title:str=Form(...),category:str=Form(
         for uid in ids:
             ru=s.get(User,uid)
             if not ru or ru.facility_id!=fid or ru.role!='family': continue
-            s.add(DocumentRecipient(document_id=d.id,user_id=uid,signer_role='家族',sign_order=order,status='sent')); notify(s,uid,'新しい契約書があります',title,'documents',d.id); order+=1
+            s.add(DocumentRecipient(document_id=d.id,user_id=uid,signer_role='家族',sign_order=order,status='sent')); emit_notification_event(s,'document.requested',[uid],'確認・署名が必要な契約書があります','ITTOKAIで契約書をご確認ください。','documents',d.id,fid,u.id,f'document.requested:{d.id}:{uid}'); order+=1
             if not resident_id:
                 fl=s.query(FamilyLink).filter_by(user_id=uid,is_primary=1).first() or s.query(FamilyLink).filter_by(user_id=uid).first()
                 if fl: link_document_resident(s,d.id,fl.resident_id)
@@ -703,8 +1032,10 @@ def sign_document(doc_id:int,inp:SignIn,request:Request):
         if r.signed_at: raise HTTPException(400,'署名済みです')
         if not inp.consent: raise HTTPException(400,'同意が必要です')
         sig_hash=sha256_text(inp.signature_data); sig=DocumentSignature(document_id=doc_id,recipient_id=r.id,user_id=u.id,signer_name=inp.signer_name,signature_data=inp.signature_data,signature_hash=sig_hash,ip=client_ip(request),user_agent=request.headers.get('user-agent','')); s.add(sig); r.consent_at=now_dt(); r.signed_at=now_dt(); r.status='signed'; s.flush(); remaining=s.query(DocumentRecipient).filter(DocumentRecipient.document_id==doc_id,DocumentRecipient.signed_at.is_(None)).count(); d.status='signed' if remaining==0 else 'partial_signed'; audit(s,request,u,'documents','sign','document',doc_id,{'signature_hash':sig_hash});
-        admins=s.query(User).filter_by(facility_id=d.facility_id,role='admin',active=1).all()
-        for a in admins: notify(s,a.id,'書類の署名が完了しました',d.title,'documents',doc_id)
+        recipients=users_by_roles(s,['admin'],d.facility_id)
+        creator=s.get(User,d.created_by) if d.created_by else None
+        if creator and creator.active and creator.id not in [x.id for x in recipients]: recipients.append(creator)
+        emit_notification_event(s,'document.signed',recipients,'ご家族の書類署名が完了しました','ITTOKAIで署名済み書類をご確認ください。','documents',doc_id,d.facility_id,u.id,f'document.signed:{doc_id}:{u.id}')
         s.commit(); return {'ok':True}
 
 @app.get('/api/documents/{doc_id}/original')
@@ -727,7 +1058,7 @@ def reissue_document(doc_id:int,inp:ReissueIn,request:Request):
         facility_scope(u,old.facility_id)
         d=Document(facility_id=old.facility_id,title=inp.title or old.title,category=old.category,body=inp.body if inp.body is not None else old.body,version=old.version+1,status='sent',due_at=now_dt()+timedelta(days=inp.due_days),requires_signature=old.requires_signature,required_checks_json=old.required_checks_json,file_name=old.file_name,file_blob=old.file_blob,original_hash=old.original_hash,created_by=u.id,sent_at=now_dt(),previous_document_id=old.id); s.add(d); s.flush()
         for idx,r in enumerate(s.query(DocumentRecipient).filter_by(document_id=old.id).order_by(DocumentRecipient.sign_order).all(),1):
-            s.add(DocumentRecipient(document_id=d.id,user_id=r.user_id,signer_role=r.signer_role,sign_order=idx,status='sent')); notify(s,r.user_id,'書類が再発行されました',d.title,'documents',d.id)
+            s.add(DocumentRecipient(document_id=d.id,user_id=r.user_id,signer_role=r.signer_role,sign_order=idx,status='sent')); emit_notification_event(s,'document.requested',[r.user_id],'書類が更新されました','ITTOKAIで再発行された書類をご確認ください。','documents',d.id,d.facility_id,u.id,f'document.reissue:{d.id}:{r.user_id}')
         for l in s.query(DocumentResidentLink).filter_by(document_id=old.id).all(): link_document_resident(s,d.id,l.resident_id)
         old.status='superseded'; audit(s,request,u,'documents','reissue','document',d.id,{'previous':old.id},old.facility_id); s.commit(); return {'id':d.id,'version':d.version,'ok':True}
 
@@ -739,7 +1070,7 @@ def remind_document(doc_id:int,request:Request):
         facility_scope(u,d.facility_id)
         n=0
         for r in s.query(DocumentRecipient).filter_by(document_id=d.id).all():
-            if not r.signed_at: notify(s,r.user_id,'書類の確認をお願いします',d.title,'documents',d.id); n+=1
+            if not r.signed_at: emit_notification_event(s,'document.reminder',[r.user_id],'書類の確認をお願いします','ITTOKAIで未処理の書類をご確認ください。','documents',d.id,d.facility_id,u.id,f'document.manual_reminder:{d.id}:{r.user_id}:{datetime.now(JST).date().isoformat()}'); n+=1
         audit(s,request,u,'documents','remind','document',d.id,{'count':n},d.facility_id); s.commit(); return {'ok':True,'count':n}
 
 @app.get('/api/documents/{doc_id}/pdf')
@@ -930,10 +1261,12 @@ def create_workflow(inp:WorkflowIn,request:Request):
         w=WorkflowRequest(facility_id=u.facility_id,department_id=u.department_id,applicant_id=u.id,request_type=inp.request_type,status=status,request_date=inp.request_date,start_time=inp.start_time,end_time=inp.end_time,payload_json=json.dumps(inp.payload,ensure_ascii=False),applicant_comment=inp.comment); s.add(w); s.flush();
         if status=='approved': _apply_leave_to_grants(s,w)
         audit(s,request,u,'workflow','submit','workflow_request',w.id,{'type':inp.request_type},u.facility_id)
-        approvers=s.query(User).filter(User.facility_id==u.facility_id,User.role.in_(['middle_manager','admin']),User.active==1).all()
-        for a in approvers:
-            if a.role=='middle_manager' and u.department_id and a.department_id!=u.department_id: continue
-            notify(s,a.id,'職員申請があります',f'{u.name}：{inp.request_type}','workflow',w.id)
+        if status=='pending_manager':
+            approvers=users_by_roles(s,['middle_manager'],u.facility_id,u.department_id)
+            if not approvers: approvers=users_by_roles(s,['admin'],u.facility_id)
+        elif status=='pending_admin': approvers=users_by_roles(s,['admin'],u.facility_id)
+        else: approvers=[]
+        emit_notification_event(s,'workflow.submitted',approvers,'承認が必要な職員申請があります',f'{inp.request_type}の申請が届いています。ITTOKAIで確認してください。','workflow',w.id,u.facility_id,u.id,f'workflow.submitted:{w.id}:{status}')
         s.commit(); return {'id':w.id,'status':w.status}
 
 class ApprovalIn(BaseModel): action:str; comment:str=''
@@ -955,7 +1288,14 @@ def workflow_action(rid:int,inp:ApprovalIn,request:Request):
             _apply_leave_to_grants(s,w)
         elif inp.action=='reject': w.status='rejected'
         else: w.status='returned'
-        w.updated_at=now_dt(); s.add(WorkflowApproval(request_id=w.id,approver_id=u.id,approver_role=u.role,action=inp.action,comment=inp.comment)); notify(s,w.applicant_id,'申請結果が更新されました',f'{w.request_type}：{w.status}','workflow',w.id); audit(s,request,u,'workflow',inp.action,'workflow_request',w.id,{'comment':inp.comment},w.facility_id); s.commit(); return {'ok':True,'status':w.status}
+        w.updated_at=now_dt(); s.add(WorkflowApproval(request_id=w.id,approver_id=u.id,approver_role=u.role,action=inp.action,comment=inp.comment))
+        if w.status=='pending_admin':
+            admins=users_by_roles(s,['admin'],w.facility_id)
+            emit_notification_event(s,'workflow.forwarded',admins,'承認待ち申請があります',f'{w.request_type}が中間管理職から回付されました。','workflow',w.id,w.facility_id,u.id,f'workflow.forwarded:{w.id}:admin')
+        else:
+            body='申請が承認されました。' if w.status=='approved' else ('申請が差し戻されました。' if w.status=='returned' else '申請が否認されました。')
+            emit_notification_event(s,'workflow.result',[w.applicant_id],'申請結果が更新されました',body,'workflow',w.id,w.facility_id,u.id,f'workflow.result:{w.id}:{w.status}')
+        audit(s,request,u,'workflow',inp.action,'workflow_request',w.id,{'comment':inp.comment},w.facility_id); s.commit(); return {'ok':True,'status':w.status}
 
 @app.get('/api/workflows/export.csv')
 def workflow_export(request:Request,scope:str='mine'):
@@ -1071,7 +1411,11 @@ def create_visit(inp:VisitIn,request:Request):
         if not slot or slot['remaining']<=0: raise HTTPException(400,'この時間枠は予約できません')
         if inp.visitor_count<1 or inp.visitor_count>int(slot.get('max_visitors') or 4): raise HTTPException(400,'来訪人数が上限を超えています')
         if not inp.representative.strip(): raise HTTPException(400,'来訪代表者名が必要です')
-        status='confirmed' if slot['approval_mode']=='auto' else 'pending'; v=VisitReservation(facility_id=res.facility_id,resident_id=res.id,family_user_id=u.id,visit_date=inp.visit_date,start_time=inp.start_time,end_time=slot['end_time'],place_name=inp.place_name,visitor_count=inp.visitor_count,representative=inp.representative.strip(),phone=inp.phone,notes=inp.notes,status=status); s.add(v); s.flush(); audit(s,request,u,'visits','book','visit',v.id,{},res.facility_id); s.commit(); return {'id':v.id,'status':status}
+        status='confirmed' if slot['approval_mode']=='auto' else 'pending'; v=VisitReservation(facility_id=res.facility_id,resident_id=res.id,family_user_id=u.id,visit_date=inp.visit_date,start_time=inp.start_time,end_time=slot['end_time'],place_name=inp.place_name,visitor_count=inp.visitor_count,representative=inp.representative.strip(),phone=inp.phone,notes=inp.notes,status=status); s.add(v); s.flush()
+        admins=users_by_roles(s,['admin'],res.facility_id)
+        emit_notification_event(s,'visit.requested',admins,'面会予約が入りました',f'{inp.visit_date} {inp.start_time} の面会予約です。','visits',v.id,res.facility_id,u.id,f'visit.requested:{v.id}')
+        if status=='confirmed': emit_notification_event(s,'visit.confirmed',[u.id],'面会予約が確定しました',f'{inp.visit_date} {inp.start_time} の予約が確定しています。','visits',v.id,res.facility_id,None,f'visit.confirmed:{v.id}')
+        audit(s,request,u,'visits','book','visit',v.id,{},res.facility_id); s.commit(); return {'id':v.id,'status':status}
 
 @app.post('/api/visits/{vid}/cancel')
 def cancel_visit(vid:int,request:Request):
@@ -1079,8 +1423,27 @@ def cancel_visit(vid:int,request:Request):
         u=current_user(request,s); require_roles(u,'family','staff','middle_manager','admin','hq'); v=s.get(VisitReservation,vid)
         if not v: raise HTTPException(404,'予約がありません')
         if u.role=='family' and v.family_user_id!=u.id: raise HTTPException(403,'権限がありません')
-        facility_scope(u,v.facility_id); v.status='cancelled'; audit(s,request,u,'visits','cancel','visit',vid,{},v.facility_id); s.commit(); return {'ok':True}
+        facility_scope(u,v.facility_id); v.status='cancelled'
+        recipients=users_by_roles(s,['admin'],v.facility_id) if u.role=='family' else [v.family_user_id]
+        emit_notification_event(s,'visit.cancelled',recipients,'面会予約がキャンセルされました','ITTOKAIで面会予約の状態をご確認ください。','visits',vid,v.facility_id,u.id,f'visit.cancelled:{vid}:{u.role}')
+        audit(s,request,u,'visits','cancel','visit',vid,{},v.facility_id); s.commit(); return {'ok':True}
 
+
+class VisitStatusIn(BaseModel):
+    status:str
+
+@app.post('/api/visits/{vid}/status')
+def update_visit_status(vid:int,inp:VisitStatusIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'admin','middle_manager'); v=s.get(VisitReservation,vid)
+        if not v: raise HTTPException(404,'予約がありません')
+        facility_scope(u,v.facility_id)
+        if inp.status not in ('confirmed','cancelled'): raise HTTPException(400,'状態が不正です')
+        if v.status not in ('pending','confirmed'): raise HTTPException(400,'この予約は変更できません')
+        v.status=inp.status
+        et='visit.confirmed' if inp.status=='confirmed' else 'visit.cancelled'; title='面会予約が確定しました' if inp.status=='confirmed' else '面会予約がキャンセルされました'
+        emit_notification_event(s,et,[v.family_user_id],title,'ITTOKAIで面会予約の詳細をご確認ください。','visits',v.id,v.facility_id,u.id,f'{et}:{v.id}:facility')
+        audit(s,request,u,'visits','status','visit',v.id,{'status':inp.status},v.facility_id); s.commit(); return {'ok':True,'status':v.status}
 
 class VisitRuleIn(BaseModel):
     place_name:str='面会室A'; weekday:int; start_time:str='14:00'; end_time:str='17:00'; slot_minutes:int=30; capacity:int=1; max_visitors:int=4; booking_days_ahead:int=30; cutoff_hours:int=24; approval_mode:str='auto'
@@ -1110,28 +1473,200 @@ def proxy_visit(inp:ProxyVisitIn,request:Request):
     with SessionLocal() as s:
         u=current_user(request,s); require_roles(u,'admin'); res=s.get(Resident,inp.resident_id); fam=s.get(User,inp.family_user_id)
         if not res or res.facility_id!=u.facility_id or not fam or fam.facility_id!=u.facility_id: raise HTTPException(400,'利用者または家族が不正です')
-        v=VisitReservation(facility_id=u.facility_id,resident_id=res.id,family_user_id=fam.id,visit_date=inp.visit_date,start_time=inp.start_time,end_time=inp.end_time,place_name=inp.place_name,visitor_count=inp.visitor_count,representative=inp.representative,phone=inp.phone,notes=inp.notes,status='confirmed'); s.add(v); s.flush(); notify(s,fam.id,'面会予約を登録しました',f'{inp.visit_date} {inp.start_time} {inp.place_name}','visits',v.id); audit(s,request,u,'visits','proxy_book','visit',v.id,{},u.facility_id); s.commit(); return {'id':v.id,'status':'confirmed'}
+        v=VisitReservation(facility_id=u.facility_id,resident_id=res.id,family_user_id=fam.id,visit_date=inp.visit_date,start_time=inp.start_time,end_time=inp.end_time,place_name=inp.place_name,visitor_count=inp.visitor_count,representative=inp.representative,phone=inp.phone,notes=inp.notes,status='confirmed'); s.add(v); s.flush(); emit_notification_event(s,'visit.confirmed',[fam.id],'面会予約を登録しました',f'{inp.visit_date} {inp.start_time} {inp.place_name}','visits',v.id,u.facility_id,u.id,f'visit.proxy_confirmed:{v.id}'); audit(s,request,u,'visits','proxy_book','visit',v.id,{},u.facility_id); s.commit(); return {'id':v.id,'status':'confirmed'}
 
-# -------- procurement --------
+# -------- procurement / product & inventory master v20.6 --------
+def product_meta_for(s,pid):
+    return s.query(ProductMeta).filter_by(product_id=pid).first()
+
+def product_public_json(s,p):
+    m=product_meta_for(s,p.id)
+    return {'id':p.id,'sku':p.sku,'name':p.name,'category':p.category,'specification':p.specification,'price':(m.sale_price if m and m.sale_price else p.standard_price),'unit':p.unit,'short_message':m.short_message if m else '', 'recommended':m.recommended if m else 0,'active':p.active,'image_url':f'/api/products/{p.id}/image'}
+
+def partner_public_products(s,limit=50):
+    out=[]
+    q=s.query(PartnerProduct,PartnerStore).join(PartnerStore,PartnerProduct.store_id==PartnerStore.id).filter(PartnerProduct.active==1,PartnerStore.active==1).order_by(PartnerProduct.recommended.desc(),PartnerProduct.id.desc()).limit(limit)
+    for p,st in q:
+        out.append({'id':p.id,'store_id':st.id,'store_name':st.store_name,'store_category':st.category,'sku':p.sku,'name':p.name,'short_message':p.short_message,'description':p.description,'category':p.category,'specification':p.specification,'unit':p.unit,'price':p.price,'image_url':p.image_url,'recommended':p.recommended})
+    return out
+
+def open_incoming_qty(s,fid,pid):
+    q=(s.query(func.coalesce(func.sum(PurchaseOrderItem.qty-PurchaseOrderItem.received_qty),0))
+       .join(PurchaseOrder,PurchaseOrderItem.order_id==PurchaseOrder.id)
+       .filter(PurchaseOrder.facility_id==fid,PurchaseOrderItem.product_id==pid,PurchaseOrder.status.in_(['submitted','confirmed','shipped','partially_received'])))
+    return float(q.scalar() or 0)
+
+def stock_status(s,inv):
+    incoming=open_incoming_qty(s,inv.facility_id,inv.product_id)
+    if inv.on_hand<=0 and incoming<=0: return '欠品'
+    if incoming>0: return '発注済'
+    if inv.on_hand<inv.reorder_point: return '発注必要'
+    if inv.on_hand<=inv.safety_stock: return '残りわずか'
+    return '正常'
+
+def suggested_reorder_qty(s,inv,p):
+    pol=s.query(FacilityStockPolicy).filter_by(facility_id=inv.facility_id,product_id=p.id).first()
+    incoming=open_incoming_qty(s,inv.facility_id,p.id)
+    if incoming>0: return 0
+    if pol and pol.reorder_qty>0: q=pol.reorder_qty
+    else: q=max(p.min_order_qty, max(0,inv.target_stock-inv.on_hand))
+    pack=max(1,int(p.pack_size or 1)); q=max(float(p.min_order_qty or 1),float(q))
+    if pack>1: q=((int(q+pack-1)//pack)*pack)
+    return float(q)
+
+def _create_po(s,fid,sup,items,approved_by=None,status='submitted'):
+    no='PO-'+datetime.now(JST).strftime('%Y%m%d%H%M%S%f')+'-'+secrets.token_hex(2).upper(); o=PurchaseOrder(order_no=no,facility_id=fid,supplier_id=sup.id,status=status,approved_by=approved_by,ordered_at=now_dt() if status=='submitted' else None); s.add(o); s.flush(); total=0
+    for p,q in items:
+        fp=s.query(FacilityPrice).filter_by(facility_id=fid,product_id=p.id).first(); price=fp.purchase_price if fp else (product_meta_for(s,p.id).purchase_price if product_meta_for(s,p.id) else p.standard_price); total+=q*price; s.add(PurchaseOrderItem(order_id=o.id,product_id=p.id,qty=q,unit_price=price))
+    o.total_amount=total; return o
+
+def evaluate_auto_orders(s,facility_id=None,product_id=None,actor_id=None):
+    q=s.query(Inventory,Product).join(Product,Inventory.product_id==Product.id)
+    if facility_id: q=q.filter(Inventory.facility_id==facility_id)
+    if product_id: q=q.filter(Inventory.product_id==product_id)
+    sup=s.query(Supplier).filter_by(code='CAREDO').first(); created=[]
+    if not sup: return created
+    for inv,p in q.all():
+        pol=s.query(FacilityStockPolicy).filter_by(facility_id=inv.facility_id,product_id=p.id).first()
+        if not pol or pol.auto_order_mode=='off' or inv.on_hand>=inv.reorder_point: continue
+        if open_incoming_qty(s,inv.facility_id,p.id)>0: continue
+        existing=s.query(AutoOrderEvent).filter_by(facility_id=inv.facility_id,product_id=p.id,status='pending_approval').first()
+        if existing: continue
+        qty=suggested_reorder_qty(s,inv,p)
+        if qty<=0: continue
+        if pol.auto_order_mode=='auto':
+            o=_create_po(s,inv.facility_id,sup,[(p,qty)],approved_by=actor_id,status='submitted'); ev=AutoOrderEvent(facility_id=inv.facility_id,product_id=p.id,order_id=o.id,mode='auto',status='ordered',suggested_qty=qty,on_hand_at_trigger=inv.on_hand,reorder_point=inv.reorder_point,resolved_at=now_dt()); pol.last_ordered_at=now_dt(); created.append({'event_id':None,'order_id':o.id,'mode':'auto'})
+        else:
+            ev=AutoOrderEvent(facility_id=inv.facility_id,product_id=p.id,mode='approval',status='pending_approval',suggested_qty=qty,on_hand_at_trigger=inv.on_hand,reorder_point=inv.reorder_point); created.append({'event_id':None,'mode':'approval'})
+        s.add(ev); s.flush(); created[-1]['event_id']=ev.id
+        recipients=users_by_roles(s,['admin'],inv.facility_id)+users_by_roles(s,['caredo'])
+        if pol.auto_order_mode=='auto':
+            emit_notification_event(s,'inventory.auto_order_created',recipients,'自動発注が作成されました',f'{p.name} の自動発注が作成されました。','procurement',o.id,inv.facility_id,actor_id,f'inventory.auto_order_created:{ev.id}')
+        else:
+            emit_notification_event(s,'inventory.auto_order_candidate',recipients,'自動発注候補があります',f'{p.name} が発注点を下回りました。発注候補をご確認ください。','procurement',ev.id,inv.facility_id,actor_id,f'inventory.auto_order_candidate:{ev.id}')
+    return created
+
 def procurement_snapshot(s,fid):
     inv=s.query(Inventory,Product,Supplier).join(Product,Inventory.product_id==Product.id).join(Supplier,Product.supplier_id==Supplier.id).filter(Inventory.facility_id==fid).all()
     inventory=[]; suggestions=[]
     for i,p,sup in inv:
-        row={'inventory_id':i.id,'product_id':p.id,'sku':p.sku,'name':p.name,'category':p.category,'supplier':sup.name,'supplier_type':sup.supplier_type,'on_hand':i.on_hand,'safety_stock':i.safety_stock,'reorder_point':i.reorder_point,'target_stock':i.target_stock,'avg_daily_usage':i.avg_daily_usage,'unit':p.unit}; inventory.append(row)
-        if i.on_hand < i.reorder_point:
-            q=max(p.min_order_qty, int(max(0,i.target_stock-i.on_hand)+0.999)); suggestions.append(dict(row,suggested_qty=q))
+        pol=s.query(FacilityStockPolicy).filter_by(facility_id=fid,product_id=p.id).first()
+        incoming=open_incoming_qty(s,fid,p.id); status=stock_status(s,i); q=suggested_reorder_qty(s,i,p) if i.on_hand<i.reorder_point else 0
+        row={'inventory_id':i.id,'product_id':p.id,'sku':p.sku,'name':p.name,'category':p.category,'supplier':sup.name,'supplier_type':sup.supplier_type,'on_hand':i.on_hand,'safety_stock':i.safety_stock,'reorder_point':i.reorder_point,'target_stock':i.target_stock,'avg_daily_usage':i.avg_daily_usage,'unit':p.unit,'incoming_qty':incoming,'status':status,'reorder_qty':pol.reorder_qty if pol else 0,'max_stock':pol.max_stock if pol else 0,'auto_order_mode':pol.auto_order_mode if pol else 'off','last_ordered_at':dt_iso(pol.last_ordered_at) if pol else None,'last_received_at':dt_iso(pol.last_received_at) if pol else None}; inventory.append(row)
+        if i.on_hand < i.reorder_point and incoming<=0: suggestions.append(dict(row,suggested_qty=q))
     orders=[order_json(s,o) for o in s.query(PurchaseOrder).filter_by(facility_id=fid).order_by(PurchaseOrder.id.desc()).limit(100)]
     invoices=[invoice_json(s,x) for x in s.query(Invoice).filter_by(facility_id=fid).order_by(Invoice.id.desc()).limit(100)]
-    return {'inventory':inventory,'suggestions':suggestions,'orders':orders,'invoices':invoices}
+    events=[auto_event_json(s,e) for e in s.query(AutoOrderEvent).filter_by(facility_id=fid).order_by(AutoOrderEvent.id.desc()).limit(100)]
+    return {'inventory':inventory,'suggestions':suggestions,'orders':orders,'invoices':invoices,'auto_order_events':events}
+
 def order_json(s,o):
     sup=s.get(Supplier,o.supplier_id); items=[]
     for it in s.query(PurchaseOrderItem).filter_by(order_id=o.id).all():
         p=s.get(Product,it.product_id); items.append({'id':it.id,'product_id':it.product_id,'sku':p.sku if p else '','name':p.name if p else '','qty':it.qty,'unit_price':it.unit_price,'received_qty':it.received_qty})
     return {'id':o.id,'order_no':o.order_no,'facility_id':o.facility_id,'supplier_id':o.supplier_id,'supplier':sup.name if sup else '','status':o.status,'total_amount':o.total_amount,'ordered_at':dt_iso(o.ordered_at),'confirmed_at':dt_iso(o.confirmed_at),'shipped_at':dt_iso(o.shipped_at),'received_at':dt_iso(o.received_at),'items':items}
+
 def invoice_json(s,inv): return {'id':inv.id,'invoice_no':inv.invoice_no,'facility_id':inv.facility_id,'order_id':inv.order_id,'invoice_date':inv.invoice_date,'total_amount':inv.total_amount,'status':inv.status,'match_status':inv.match_status,'differences':json.loads(inv.difference_json or '{}')}
+
+def auto_event_json(s,e):
+    f=s.get(Facility,e.facility_id); p=s.get(Product,e.product_id)
+    return {'id':e.id,'facility_id':e.facility_id,'facility_name':f.name if f else '','product_id':e.product_id,'sku':p.sku if p else '','product_name':p.name if p else '','order_id':e.order_id,'mode':e.mode,'status':e.status,'suggested_qty':e.suggested_qty,'on_hand_at_trigger':e.on_hand_at_trigger,'reorder_point':e.reorder_point,'created_at':dt_iso(e.created_at),'resolved_at':dt_iso(e.resolved_at)}
+
+def caredo_product_json(s,p):
+    m=product_meta_for(s,p.id); buy=m.purchase_price if m and m.purchase_price else p.standard_price; sale=m.sale_price if m and m.sale_price else p.standard_price; margin=sale-buy; rate=(margin/sale*100) if sale else 0
+    return {'id':p.id,'sku':p.sku,'name':p.name,'specification':p.specification,'category':p.category,'unit':p.unit,'pack_size':p.pack_size,'tax_rate':p.tax_rate,'standard_price':p.standard_price,'purchase_price':buy,'sale_price':sale,'gross_profit':round(margin,2),'gross_margin_rate':round(rate,1),'min_order_qty':p.min_order_qty,'lead_time_days':p.lead_time_days,'inventory_managed':p.inventory_managed,'active':p.active,'short_message':m.short_message if m else '','description':m.description if m else '','recommended':m.recommended if m else 0,'sale_start':m.sale_start if m else '','sale_end':m.sale_end if m else '','display_order':m.display_order if m else 0,'image_url':f'/api/products/{p.id}/image'}
+
+def customer_order_json(s,o,merchant_view=False):
+    fac=s.get(Facility,o.facility_id); items=[]
+    for it in s.query(CustomerOrderItem).filter_by(order_id=o.id).order_by(CustomerOrderItem.id).all():
+        items.append({'id':it.id,'product_kind':it.product_kind,'product_id':it.product_id,'sku':it.sku,'name':it.name,'qty':it.qty,'unit_price':it.unit_price,'amount':round(float(it.qty or 0)*float(it.unit_price or 0),2)})
+    out={'id':o.id,'order_no':o.order_no,'merchant_type':o.merchant_type,'status':o.status,'total_amount':o.total_amount,'gift_message':o.gift_message,'delivery_date':o.delivery_date,'facility_id':o.facility_id,'facility_name':fac.name if fac else '','created_at':dt_iso(o.created_at),'accepted_at':dt_iso(o.accepted_at),'shipped_at':dt_iso(o.shipped_at),'delivered_at':dt_iso(o.delivered_at),'items':items}
+    if not merchant_view:
+        r=s.get(Resident,o.resident_id) if o.resident_id else None; out['resident_id']=o.resident_id; out['resident_name']=r.name if r else ''
+    return out
+
+def customer_orders_for_family(s,user_id):
+    return [customer_order_json(s,o,False) for o in s.query(CustomerOrder).filter_by(family_user_id=user_id).order_by(CustomerOrder.id.desc()).limit(100)]
+
+def customer_orders_for_caredo(s):
+    return [customer_order_json(s,o,True) for o in s.query(CustomerOrder).filter_by(merchant_type='caredo').order_by(CustomerOrder.id.desc()).limit(200)]
+
+def customer_orders_for_sponsor(s,user_id):
+    stores=[x.id for x in s.query(PartnerStore).filter_by(owner_user_id=user_id).all()]
+    if not stores: return []
+    return [customer_order_json(s,o,True) for o in s.query(CustomerOrder).filter(CustomerOrder.merchant_type=='sponsor',CustomerOrder.store_id.in_(stores)).order_by(CustomerOrder.id.desc()).limit(200)]
+
 def caredo_snapshot(s):
     sup=s.query(Supplier).filter_by(code='CAREDO').first(); orders=[order_json(s,o) for o in s.query(PurchaseOrder).filter_by(supplier_id=sup.id).order_by(PurchaseOrder.id.desc()).limit(300)] if sup else []
-    return {'supplier':{'id':sup.id,'name':sup.name,'site_url':sup.site_url} if sup else None,'orders':orders,'products':[{'id':p.id,'sku':p.sku,'name':p.name,'category':p.category,'unit':p.unit,'standard_price':p.standard_price,'lead_time_days':p.lead_time_days,'image_url':f'/api/products/{p.id}/image'} for p in s.query(Product).filter_by(supplier_id=sup.id,active=1).all()] if sup else []}
+    facilities=[facility_json(f) for f in s.query(Facility).filter_by(active=1).all()]
+    all_inventory=[]
+    for f in s.query(Facility).filter_by(active=1).all(): all_inventory.extend(procurement_snapshot(s,f.id)['inventory'])
+    # restore facility labels after aggregation
+    for row in all_inventory:
+        inv=s.get(Inventory,row['inventory_id']); fac=s.get(Facility,inv.facility_id) if inv else None; row['facility_id']=inv.facility_id if inv else None; row['facility_name']=fac.name if fac else ''
+    events=[auto_event_json(s,e) for e in s.query(AutoOrderEvent).order_by(AutoOrderEvent.id.desc()).limit(300)]
+    return {'supplier':{'id':sup.id,'name':sup.name,'site_url':sup.site_url} if sup else None,'orders':orders,'products':[caredo_product_json(s,p) for p in s.query(Product).filter_by(supplier_id=sup.id).order_by(Product.id).all()] if sup else [],'facilities':facilities,'facility_inventory':all_inventory,'auto_order_events':events,'customer_orders':customer_orders_for_caredo(s)}
+
+def sponsor_snapshot(s,u):
+    stores=s.query(PartnerStore).filter_by(owner_user_id=u.id).order_by(PartnerStore.id).all()
+    return {'message':'協賛会社ポータル。利用者個人情報・介護情報は表示しません。','stores':[{'id':x.id,'company_name':x.company_name,'store_name':x.store_name,'category':x.category,'image_url':x.image_url,'address':x.address,'phone':x.phone,'hours':x.hours,'closed_days':x.closed_days,'delivery_area':x.delivery_area,'min_order_amount':x.min_order_amount,'order_cutoff':x.order_cutoff,'delivery_methods':x.delivery_methods,'message':x.message,'active':x.active} for x in stores], 'products':[{'id':p.id,'store_id':p.store_id,'sku':p.sku,'name':p.name,'short_message':p.short_message,'description':p.description,'category':p.category,'specification':p.specification,'unit':p.unit,'price':p.price,'image_url':p.image_url,'recommended':p.recommended,'active':p.active,'sale_start':p.sale_start,'sale_end':p.sale_end} for p in s.query(PartnerProduct).filter(PartnerProduct.store_id.in_([x.id for x in stores] or [-1])).order_by(PartnerProduct.id).all()],'customer_orders':customer_orders_for_sponsor(s,u.id)}
+
+class CustomerOrderIn(BaseModel):
+    product_kind:str; product_id:int; qty:float=1; resident_id:Optional[int]=None; gift_message:str=''; delivery_date:str=''
+
+@app.post('/api/shop/orders')
+def create_customer_order(inp:CustomerOrderIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'family')
+        if inp.qty<=0 or inp.qty>100: raise HTTPException(400,'数量が不正です')
+        resident_id=inp.resident_id
+        if resident_id:
+            fl=s.query(FamilyLink).filter_by(user_id=u.id,resident_id=resident_id).first()
+            if not fl: raise HTTPException(403,'この利用者への注文権限がありません')
+            res=s.get(Resident,resident_id); facility_id=res.facility_id
+        else:
+            fl=s.query(FamilyLink).filter_by(user_id=u.id,is_primary=1).first() or s.query(FamilyLink).filter_by(user_id=u.id).first()
+            if not fl: raise HTTPException(400,'配送先利用者が設定されていません')
+            resident_id=fl.resident_id; res=s.get(Resident,resident_id); facility_id=res.facility_id
+        merchant_type=''; supplier_id=None; store_id=None; recipients=[]
+        if inp.product_kind=='caredo':
+            p=s.get(Product,inp.product_id); sup=s.query(Supplier).filter_by(code='CAREDO').first(); m=product_meta_for(s,p.id) if p else None
+            if not p or not sup or p.supplier_id!=sup.id or not p.active: raise HTTPException(404,'商品がありません')
+            price=float((m.sale_price if m and m.sale_price else p.standard_price) or 0); sku=p.sku; name=p.name; merchant_type='caredo'; supplier_id=sup.id; recipients=users_by_roles(s,['caredo'])
+        elif inp.product_kind=='sponsor':
+            p=s.get(PartnerProduct,inp.product_id); st=s.get(PartnerStore,p.store_id) if p else None
+            if not p or not st or not p.active or not st.active: raise HTTPException(404,'ギフト商品がありません')
+            price=float(p.price or 0); sku=p.sku; name=p.name; merchant_type='sponsor'; store_id=st.id; owner=s.get(User,st.owner_user_id); recipients=[owner] if owner and owner.active else []
+        else: raise HTTPException(400,'商品種別が不正です')
+        no='CO-'+datetime.now(JST).strftime('%Y%m%d%H%M%S%f')+'-'+secrets.token_hex(2).upper()
+        o=CustomerOrder(order_no=no,family_user_id=u.id,facility_id=facility_id,resident_id=resident_id,merchant_type=merchant_type,supplier_id=supplier_id,store_id=store_id,status='submitted',total_amount=round(price*inp.qty,2),gift_message=inp.gift_message[:1000],delivery_date=inp.delivery_date[:10]); s.add(o); s.flush()
+        s.add(CustomerOrderItem(order_id=o.id,product_kind=inp.product_kind,product_id=inp.product_id,sku=sku,name=name,qty=inp.qty,unit_price=price))
+        emit_notification_event(s,'shop.order_submitted',recipients,'新しい注文が入りました',f'注文番号 {o.order_no}。ITTOKAIで内容をご確認ください。','shop',o.id,facility_id,u.id,f'shop.order_submitted:{o.id}',{'merchant_type':merchant_type})
+        emit_notification_event(s,'shop.order_status',[u.id],'ご注文を受け付けました',f'{name} の注文を受け付けました。','shop',o.id,facility_id,None,f'shop.order_ack:{o.id}')
+        audit(s,request,u,'shop','customer_order_create','customer_order',o.id,{'merchant_type':merchant_type,'amount':o.total_amount},facility_id); s.commit(); return customer_order_json(s,o,False)
+
+class CustomerOrderStatusIn(BaseModel):
+    status:str
+
+@app.post('/api/shop/orders/{oid}/status')
+def customer_order_status(oid:int,inp:CustomerOrderStatusIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'caredo','sponsor','admin'); o=s.get(CustomerOrder,oid)
+        if not o: raise HTTPException(404,'注文がありません')
+        if u.role=='caredo' and o.merchant_type!='caredo': raise HTTPException(403,'この注文は操作できません')
+        if u.role=='sponsor':
+            st=s.get(PartnerStore,o.store_id) if o.store_id else None
+            if o.merchant_type!='sponsor' or not st or st.owner_user_id!=u.id: raise HTTPException(403,'この注文は操作できません')
+        if u.role=='admin' and o.facility_id!=u.facility_id: raise HTTPException(403,'他施設の注文は操作できません')
+        allowed={'submitted':{'accepted','cancelled'},'accepted':{'shipped','cancelled'},'shipped':{'delivered'}}
+        if inp.status not in allowed.get(o.status,set()): raise HTTPException(400,'現在の状態から変更できません')
+        o.status=inp.status; o.updated_at=now_dt()
+        if inp.status=='accepted': o.accepted_at=now_dt()
+        elif inp.status=='shipped': o.shipped_at=now_dt()
+        elif inp.status=='delivered': o.delivered_at=now_dt()
+        elif inp.status=='cancelled': o.cancelled_at=now_dt()
+        labels={'accepted':'注文を確認しました','shipped':'商品を発送しました','delivered':'商品のお届けが完了しました','cancelled':'注文がキャンセルされました'}
+        emit_notification_event(s,'shop.order_status',[o.family_user_id],labels.get(inp.status,'注文状況が更新されました'),'ITTOKAIで注文状況をご確認ください。','shop',o.id,o.facility_id,u.id,f'shop.order_status:{o.id}:{inp.status}')
+        audit(s,request,u,'shop','customer_order_status','customer_order',o.id,{'status':inp.status},o.facility_id); s.commit(); return {'ok':True,'status':o.status}
 
 class InventoryAdjust(BaseModel): product_id:int; qty:float; txn_type:str='adjust'; note:str=''
 @app.post('/api/inventory/adjust')
@@ -1139,7 +1674,7 @@ def inventory_adjust(inp:InventoryAdjust,request:Request):
     with SessionLocal() as s:
         u=current_user(request,s); require_roles(u,'staff','middle_manager','admin'); inv=s.query(Inventory).filter_by(facility_id=u.facility_id,product_id=inp.product_id).first()
         if not inv: raise HTTPException(404,'在庫がありません')
-        inv.on_hand += inp.qty; inv.updated_at=now_dt(); s.add(InventoryTxn(facility_id=u.facility_id,product_id=inp.product_id,txn_type=inp.txn_type,qty=inp.qty,note=inp.note,actor_id=u.id)); audit(s,request,u,'procurement','inventory_adjust','product',inp.product_id,{'qty':inp.qty},u.facility_id); s.commit(); return {'ok':True,'on_hand':inv.on_hand}
+        inv.on_hand += inp.qty; inv.updated_at=now_dt(); s.add(InventoryTxn(facility_id=u.facility_id,product_id=inp.product_id,txn_type=inp.txn_type,qty=inp.qty,note=inp.note,actor_id=u.id)); created=evaluate_auto_orders(s,u.facility_id,inp.product_id,u.id); audit(s,request,u,'procurement','inventory_adjust','product',inp.product_id,{'qty':inp.qty,'auto_order_events':created},u.facility_id); s.commit(); return {'ok':True,'on_hand':inv.on_hand,'auto_order_events':created}
 
 class OrderIn(BaseModel): items:list[dict]
 @app.post('/api/orders')
@@ -1160,7 +1695,9 @@ def create_order(inp:OrderIn,request:Request):
         no='PO-'+datetime.now(JST).strftime('%Y%m%d%H%M%S%f')+'-'+secrets.token_hex(2).upper(); o=PurchaseOrder(order_no=no,facility_id=u.facility_id,supplier_id=sup.id,status='submitted',approved_by=u.id,ordered_at=now_dt()); s.add(o); s.flush(); total=0
         for p,q in validated:
             fp=s.query(FacilityPrice).filter_by(facility_id=u.facility_id,product_id=p.id).first(); price=fp.purchase_price if fp else p.standard_price; total+=q*price; s.add(PurchaseOrderItem(order_id=o.id,product_id=p.id,qty=q,unit_price=price))
-        o.total_amount=total; audit(s,request,u,'procurement','order_submit','purchase_order',o.id,{'total':total},u.facility_id); s.commit(); return {'id':o.id,'order_no':o.order_no,'total_amount':total}
+        o.total_amount=total
+        emit_notification_event(s,'procurement.order_submitted',users_by_roles(s,['caredo']),'施設から発注が届きました',f'注文番号 {o.order_no}。ITTOKAIで受注内容をご確認ください。','procurement',o.id,u.facility_id,u.id,f'procurement.order_submitted:{o.id}')
+        audit(s,request,u,'procurement','order_submit','purchase_order',o.id,{'total':total},u.facility_id); s.commit(); return {'id':o.id,'order_no':o.order_no,'total_amount':total}
 
 class OrderStatusIn(BaseModel): status:str
 @app.post('/api/orders/{oid}/status')
@@ -1174,6 +1711,8 @@ def order_status(oid:int,inp:OrderStatusIn,request:Request):
         o.status=inp.status
         if inp.status=='confirmed': o.confirmed_at=now_dt()
         if inp.status=='shipped': o.shipped_at=now_dt()
+        label={'confirmed':'ケア・ドゥが注文を確認しました','shipped':'ケア・ドゥが商品を出荷しました','cancelled':'発注がキャンセルされました'}.get(inp.status,'発注状況が更新されました')
+        emit_notification_event(s,'procurement.order_status',users_by_roles(s,['admin','middle_manager'],o.facility_id),label,'ITTOKAIで発注状況をご確認ください。','procurement',o.id,o.facility_id,u.id,f'procurement.order_status:{o.id}:{inp.status}')
         audit(s,request,u,'procurement','order_status','purchase_order',o.id,{'status':inp.status},o.facility_id); s.commit(); return {'ok':True}
 
 class InvoiceIn(BaseModel): order_id:int; invoice_no:str; invoice_date:str; items:list[dict]
@@ -1188,7 +1727,9 @@ def create_invoice(inp:InvoiceIn,request:Request):
         total=0; inv=Invoice(invoice_no=inp.invoice_no,supplier_id=o.supplier_id,facility_id=o.facility_id,order_id=o.id,invoice_date=inp.invoice_date,status='received'); s.add(inv); s.flush()
         for x in inp.items:
             pid=int(x['product_id']); qty=float(x['qty']); price=float(x['unit_price']); amount=qty*price; total+=amount; s.add(InvoiceItem(invoice_id=inv.id,product_id=pid,qty=qty,unit_price=price,amount=amount))
-        inv.total_amount=total; perform_match(s,inv,o); s.flush(); inv.pdf_blob=make_invoice_pdf(s,inv); audit(s,request,u,'procurement','invoice_create','invoice',inv.id,{'match':inv.match_status},o.facility_id); s.commit(); return invoice_json(s,inv)
+        inv.total_amount=total; perform_match(s,inv,o); s.flush(); inv.pdf_blob=make_invoice_pdf(s,inv)
+        emit_notification_event(s,'procurement.invoice_created',users_by_roles(s,['admin','middle_manager'],o.facility_id),'請求書が作成されました','ITTOKAIで請求・3点照合結果をご確認ください。','procurement',inv.id,o.facility_id,u.id,f'procurement.invoice_created:{inv.id}')
+        audit(s,request,u,'procurement','invoice_create','invoice',inv.id,{'match':inv.match_status},o.facility_id); s.commit(); return invoice_json(s,inv)
 
 def perform_match(s,inv,o):
     diffs=[]; oi={x.product_id:x for x in s.query(PurchaseOrderItem).filter_by(order_id=o.id).all()}
@@ -1220,13 +1761,19 @@ def receive_order(oid:int,inp:ReceiveIn,request:Request):
             if delta:
                 inv=s.query(Inventory).filter_by(facility_id=o.facility_id,product_id=it.product_id).first()
                 if inv: inv.on_hand+=delta; inv.updated_at=now_dt()
+                pol=s.query(FacilityStockPolicy).filter_by(facility_id=o.facility_id,product_id=it.product_id).first()
+                if pol: pol.last_received_at=now_dt(); pol.updated_at=now_dt()
                 s.add(InventoryTxn(facility_id=o.facility_id,product_id=it.product_id,txn_type='receipt',qty=delta,reference_type='purchase_order',reference_id=str(o.id),actor_id=u.id))
         all_items=list(byid.values()); complete=all(abs(x.received_qty-x.qty)<0.0001 for x in all_items)
         o.status='received' if complete else 'partially_received'; o.received_at=now_dt() if complete else None
+        emit_notification_event(s,'procurement.order_status',users_by_roles(s,['caredo']),'施設で受領処理が行われました',('全数の受領が完了しました。' if complete else '一部受領として登録されました。'),'procurement',o.id,o.facility_id,u.id,f'procurement.received:{o.id}:{o.status}')
         audit(s,request,u,'procurement','receive_inspect','purchase_order',o.id,{'complete':complete},o.facility_id); s.commit(); return {'ok':True,'status':o.status}
 
 class ProductIn(BaseModel):
-    sku:str; name:str; specification:str=''; category:str=''; unit:str='個'; standard_price:float=0; min_order_qty:int=1; lead_time_days:int=2
+    sku:str; name:str; specification:str=''; category:str=''; unit:str='個'; standard_price:float=0; purchase_price:float=0; sale_price:float=0; short_message:str=''; description:str=''; recommended:int=0; min_order_qty:int=1; lead_time_days:int=2; pack_size:int=1; inventory_managed:int=1; active:int=1; sale_start:str=''; sale_end:str=''
+
+class ProductUpdate(BaseModel):
+    name:Optional[str]=None; specification:Optional[str]=None; category:Optional[str]=None; unit:Optional[str]=None; standard_price:Optional[float]=None; purchase_price:Optional[float]=None; sale_price:Optional[float]=None; short_message:Optional[str]=None; description:Optional[str]=None; recommended:Optional[int]=None; min_order_qty:Optional[int]=None; lead_time_days:Optional[int]=None; pack_size:Optional[int]=None; inventory_managed:Optional[int]=None; active:Optional[int]=None; sale_start:Optional[str]=None; sale_end:Optional[str]=None
 @app.get('/api/products/{product_id}/image')
 def get_product_image(product_id:int):
     with SessionLocal() as s:
@@ -1253,7 +1800,212 @@ def create_product(inp:ProductIn,request:Request):
     with SessionLocal() as s:
         u=current_user(request,s); require_roles(u,'caredo','hq'); sup=s.query(Supplier).filter_by(code='CAREDO').first()
         if s.query(Product).filter_by(sku=inp.sku).first(): raise HTTPException(400,'SKUが重複しています')
-        p=Product(supplier_id=sup.id,**inp.model_dump()); s.add(p); s.flush(); audit(s,request,u,'procurement','product_create','product',p.id,{'sku':p.sku}); s.commit(); return {'id':p.id,'ok':True}
+        d=inp.model_dump(); meta_keys={'purchase_price','sale_price','short_message','description','recommended','sale_start','sale_end'}; pd={k:v for k,v in d.items() if k not in meta_keys}; p=Product(supplier_id=sup.id,**pd); s.add(p); s.flush(); m=ProductMeta(product_id=p.id,purchase_price=inp.purchase_price or inp.standard_price,sale_price=inp.sale_price or inp.standard_price,short_message=inp.short_message,description=inp.description,recommended=inp.recommended,sale_start=inp.sale_start,sale_end=inp.sale_end); s.add(m); audit(s,request,u,'procurement','product_create','product',p.id,{'sku':p.sku}); s.commit(); return {'id':p.id,'ok':True}
+
+@app.patch('/api/products/{product_id}')
+def update_product(product_id:int,inp:ProductUpdate,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'caredo','hq'); p=s.get(Product,product_id)
+        if not p: raise HTTPException(404,'商品がありません')
+        d=inp.model_dump(exclude_none=True); meta_keys={'purchase_price','sale_price','short_message','description','recommended','sale_start','sale_end'}
+        for k,v in d.items():
+            if k not in meta_keys and hasattr(p,k): setattr(p,k,v)
+        m=product_meta_for(s,p.id) or ProductMeta(product_id=p.id); s.add(m)
+        for k in meta_keys:
+            if k in d: setattr(m,k,d[k])
+        m.updated_at=now_dt(); audit(s,request,u,'procurement','product_update','product',p.id,d); s.commit(); return {'ok':True,'product':caredo_product_json(s,p)}
+
+class ProductBatchIn(BaseModel):
+    product_ids:list[int]; changes:dict
+@app.post('/api/products/batch')
+def batch_products(inp:ProductBatchIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'caredo','hq'); n=0
+        for pid in inp.product_ids:
+            p=s.get(Product,pid)
+            if not p: continue
+            m=product_meta_for(s,p.id) or ProductMeta(product_id=p.id); s.add(m)
+            for k,v in inp.changes.items():
+                if hasattr(p,k): setattr(p,k,v)
+                elif hasattr(m,k): setattr(m,k,v)
+            m.updated_at=now_dt(); n+=1
+        audit(s,request,u,'procurement','product_batch','product','',{'count':n,'changes':inp.changes}); s.commit(); return {'ok':True,'count':n}
+
+class StockPolicyIn(BaseModel):
+    facility_id:int; product_id:int; reorder_point:float; target_stock:float=0; reorder_qty:float=0; max_stock:float=0; auto_order_mode:str='approval'
+@app.post('/api/inventory/policy')
+def update_stock_policy(inp:StockPolicyIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'admin','hq','caredo')
+        if u.role=='admin' and inp.facility_id!=u.facility_id: raise HTTPException(403,'他施設は変更できません')
+        if inp.auto_order_mode not in ('off','approval','auto'): raise HTTPException(400,'自動発注モードが不正です')
+        inv=s.query(Inventory).filter_by(facility_id=inp.facility_id,product_id=inp.product_id).first()
+        if not inv: inv=Inventory(facility_id=inp.facility_id,product_id=inp.product_id,location='主倉庫',on_hand=0); s.add(inv)
+        inv.reorder_point=inp.reorder_point; inv.target_stock=inp.target_stock; inv.updated_at=now_dt()
+        pol=s.query(FacilityStockPolicy).filter_by(facility_id=inp.facility_id,product_id=inp.product_id).first() or FacilityStockPolicy(facility_id=inp.facility_id,product_id=inp.product_id); pol.reorder_qty=inp.reorder_qty; pol.max_stock=inp.max_stock; pol.auto_order_mode=inp.auto_order_mode; pol.updated_at=now_dt(); s.add(pol); s.flush()
+        created=evaluate_auto_orders(s,inp.facility_id,inp.product_id,u.id); audit(s,request,u,'procurement','stock_policy_update','product',inp.product_id,inp.model_dump(),inp.facility_id); s.commit(); return {'ok':True,'auto_order_events':created}
+
+@app.post('/api/inventory/evaluate-auto-orders')
+def run_auto_orders(request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'admin','hq','caredo'); fid=u.facility_id if u.role=='admin' else None; created=evaluate_auto_orders(s,fid,None,u.id); audit(s,request,u,'procurement','auto_order_evaluate','facility',fid or 'all',{'created':created},fid); s.commit(); return {'ok':True,'created':created}
+
+@app.post('/api/auto-orders/{event_id}/approve')
+def approve_auto_order(event_id:int,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'admin','caredo','hq'); ev=s.get(AutoOrderEvent,event_id)
+        if not ev or ev.status!='pending_approval': raise HTTPException(404,'承認待ちの自動発注候補がありません')
+        if u.role=='admin' and ev.facility_id!=u.facility_id: raise HTTPException(403,'他施設は承認できません')
+        p=s.get(Product,ev.product_id); sup=s.query(Supplier).filter_by(code='CAREDO').first()
+        if open_incoming_qty(s,ev.facility_id,ev.product_id)>0: ev.status='skipped_duplicate'; ev.resolved_at=now_dt(); s.commit(); return {'ok':True,'status':ev.status}
+        o=_create_po(s,ev.facility_id,sup,[(p,ev.suggested_qty)],approved_by=u.id,status='submitted'); ev.order_id=o.id; ev.status='ordered'; ev.resolved_at=now_dt(); pol=s.query(FacilityStockPolicy).filter_by(facility_id=ev.facility_id,product_id=ev.product_id).first();
+        if pol: pol.last_ordered_at=now_dt()
+        rec=users_by_roles(s,['caredo'])+users_by_roles(s,['admin'],ev.facility_id)
+        rec=[x for x in rec if x.id!=u.id]
+        emit_notification_event(s,'inventory.auto_order_created',rec,'自動発注が承認・作成されました',f'{p.name} の発注が作成されました。','procurement',o.id,ev.facility_id,u.id,f'inventory.auto_order_approved:{ev.id}')
+        audit(s,request,u,'procurement','auto_order_approve','purchase_order',o.id,{'event_id':ev.id},ev.facility_id); s.commit(); return {'ok':True,'order_id':o.id,'order_no':o.order_no}
+
+# ---- Excel master import/export ----
+def _xlsx_response(wb,filename):
+    bio=io.BytesIO(); wb.save(bio); bio.seek(0); return StreamingResponse(bio,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':f'attachment; filename="{filename}"'})
+
+def _xlsx_rows(raw):
+    wb=load_workbook(io.BytesIO(raw),data_only=True); ws=wb.active; headers=[str(x.value or '').strip() for x in ws[1]]; out=[]
+    for row in ws.iter_rows(min_row=2,values_only=True):
+        if not any(v not in (None,'') for v in row): continue
+        out.append({headers[i]:row[i] for i in range(min(len(headers),len(row)))})
+    return out
+
+@app.get('/api/caredo/products.xlsx')
+def export_caredo_products_xlsx(request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'caredo','hq'); sup=s.query(Supplier).filter_by(code='CAREDO').first(); wb=Workbook(); ws=wb.active; ws.title='商品マスタ'; headers=['sku','name','short_message','description','specification','category','unit','pack_size','purchase_price','sale_price','gross_margin_rate','min_order_qty','lead_time_days','inventory_managed','recommended','active','sale_start','sale_end']; ws.append(headers)
+        for p in s.query(Product).filter_by(supplier_id=sup.id).order_by(Product.sku).all():
+            x=caredo_product_json(s,p); ws.append([x.get(h,'') for h in headers])
+        return _xlsx_response(wb,'ITTOKAI_CareDo_ProductMaster_v20.7.xlsx')
+
+@app.post('/api/caredo/products/import-xlsx')
+async def import_caredo_products_xlsx(request:Request,file:UploadFile=File(...),commit:bool=False):
+    raw=await file.read(); rows=_xlsx_rows(raw); preview={'new':0,'update':0,'unchanged':0,'errors':[]}; parsed=[]
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'caredo','hq'); sup=s.query(Supplier).filter_by(code='CAREDO').first()
+        for idx,r in enumerate(rows,start=2):
+            sku=str(r.get('sku') or '').strip(); name=str(r.get('name') or '').strip()
+            if not sku or not name: preview['errors'].append({'row':idx,'error':'sku/nameは必須'}); continue
+            p=s.query(Product).filter_by(sku=sku).first(); preview['update' if p else 'new']+=1; parsed.append((r,p))
+        if commit and not preview['errors']:
+            for r,p in parsed:
+                if not p: p=Product(supplier_id=sup.id,sku=str(r.get('sku')).strip(),name=str(r.get('name')).strip()); s.add(p); s.flush()
+                p.name=str(r.get('name') or p.name); p.specification=str(r.get('specification') or ''); p.category=str(r.get('category') or ''); p.unit=str(r.get('unit') or '個'); p.pack_size=int(float(r.get('pack_size') or 1)); p.standard_price=float(r.get('sale_price') or 0); p.min_order_qty=int(float(r.get('min_order_qty') or 1)); p.lead_time_days=int(float(r.get('lead_time_days') or 2)); p.inventory_managed=int(float(r.get('inventory_managed') if r.get('inventory_managed') is not None else 1)); p.active=int(float(r.get('active') if r.get('active') is not None else 1))
+                m=product_meta_for(s,p.id) or ProductMeta(product_id=p.id); s.add(m); m.short_message=str(r.get('short_message') or ''); m.description=str(r.get('description') or ''); m.purchase_price=float(r.get('purchase_price') or 0); m.sale_price=float(r.get('sale_price') or 0); m.recommended=int(float(r.get('recommended') or 0)); m.sale_start=str(r.get('sale_start') or ''); m.sale_end=str(r.get('sale_end') or ''); m.updated_at=now_dt()
+            audit(s,request,u,'procurement','product_xlsx_import','product','',preview); s.commit()
+        return {'ok':True,'commit':commit,**preview}
+
+@app.get('/api/caredo/facility-inventory.xlsx')
+def export_facility_inventory_xlsx(request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'caredo','hq','admin'); wb=Workbook(); ws=wb.active; ws.title='施設別在庫'; headers=['facility_code','facility_name','sku','name','on_hand','safety_stock','reorder_point','target_stock','reorder_qty','max_stock','auto_order_mode','status','incoming_qty','last_ordered_at','last_received_at']; ws.append(headers)
+        fs=[s.get(Facility,u.facility_id)] if u.role=='admin' else s.query(Facility).filter_by(active=1).all()
+        for f in fs:
+            for x in procurement_snapshot(s,f.id)['inventory']: ws.append([f.code,f.name,x['sku'],x['name'],x['on_hand'],x['safety_stock'],x['reorder_point'],x['target_stock'],x['reorder_qty'],x['max_stock'],x['auto_order_mode'],x['status'],x['incoming_qty'],x['last_ordered_at'],x['last_received_at']])
+        return _xlsx_response(wb,'ITTOKAI_FacilityInventory_v20.7.xlsx')
+
+@app.post('/api/caredo/facility-inventory/import-xlsx')
+async def import_facility_inventory_xlsx(request:Request,file:UploadFile=File(...),commit:bool=False):
+    raw=await file.read(); rows=_xlsx_rows(raw); preview={'new':0,'update':0,'errors':[]}; parsed=[]
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'caredo','hq','admin')
+        for idx,r in enumerate(rows,start=2):
+            f=s.query(Facility).filter_by(code=str(r.get('facility_code') or '').strip()).first(); p=s.query(Product).filter_by(sku=str(r.get('sku') or '').strip()).first()
+            if not f or not p: preview['errors'].append({'row':idx,'error':'施設コードまたはSKU不明'}); continue
+            if u.role=='admin' and f.id!=u.facility_id: preview['errors'].append({'row':idx,'error':'他施設は更新不可'}); continue
+            inv=s.query(Inventory).filter_by(facility_id=f.id,product_id=p.id,location='主倉庫').first(); preview['update' if inv else 'new']+=1; parsed.append((r,f,p,inv))
+        if commit and not preview['errors']:
+            for r,f,p,inv in parsed:
+                if not inv: inv=Inventory(facility_id=f.id,product_id=p.id,location='主倉庫'); s.add(inv)
+                for k in ('on_hand','safety_stock','reorder_point','target_stock'): setattr(inv,k,float(r.get(k) or 0))
+                inv.updated_at=now_dt(); pol=s.query(FacilityStockPolicy).filter_by(facility_id=f.id,product_id=p.id).first() or FacilityStockPolicy(facility_id=f.id,product_id=p.id); pol.reorder_qty=float(r.get('reorder_qty') or 0); pol.max_stock=float(r.get('max_stock') or 0); pol.auto_order_mode=str(r.get('auto_order_mode') or 'approval'); pol.updated_at=now_dt(); s.add(pol); s.flush(); evaluate_auto_orders(s,f.id,p.id,u.id)
+            audit(s,request,u,'procurement','facility_inventory_xlsx_import','inventory','',preview); s.commit()
+        return {'ok':True,'commit':commit,**preview}
+
+class PartnerStoreIn(BaseModel):
+    company_name:str=''; store_name:str; category:str='その他'; image_url:str=''; address:str=''; phone:str=''; hours:str=''; closed_days:str=''; delivery_area:str=''; min_order_amount:float=0; order_cutoff:str=''; delivery_methods:str='施設配送'; message:str=''; active:int=1
+class PartnerProductIn(BaseModel):
+    store_id:int; sku:str; name:str; short_message:str=''; description:str=''; category:str='ギフト'; specification:str=''; unit:str='個'; price:float=0; image_url:str=''; recommended:int=0; active:int=1; sale_start:str=''; sale_end:str=''
+
+@app.post('/api/sponsor/stores')
+def create_partner_store(inp:PartnerStoreIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'sponsor'); st=PartnerStore(owner_user_id=u.id,**inp.model_dump()); s.add(st); s.flush(); audit(s,request,u,'procurement','partner_store_create','partner_store',st.id,{'store_name':st.store_name}); s.commit(); return {'ok':True,'id':st.id}
+@app.patch('/api/sponsor/stores/{sid}')
+def update_partner_store(sid:int,inp:PartnerStoreIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'sponsor'); st=s.get(PartnerStore,sid)
+        if not st or st.owner_user_id!=u.id: raise HTTPException(404,'店舗がありません')
+        for k,v in inp.model_dump().items(): setattr(st,k,v)
+        st.updated_at=now_dt(); audit(s,request,u,'procurement','partner_store_update','partner_store',st.id,{}); s.commit(); return {'ok':True}
+@app.post('/api/sponsor/products')
+def create_partner_product(inp:PartnerProductIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'sponsor'); st=s.get(PartnerStore,inp.store_id)
+        if not st or st.owner_user_id!=u.id: raise HTTPException(403,'店舗権限がありません')
+        if s.query(PartnerProduct).filter_by(store_id=st.id,sku=inp.sku).first(): raise HTTPException(400,'SKUが重複しています')
+        p=PartnerProduct(**inp.model_dump()); s.add(p); s.flush(); audit(s,request,u,'procurement','partner_product_create','partner_product',p.id,{}); s.commit(); return {'ok':True,'id':p.id}
+@app.patch('/api/sponsor/products/{pid}')
+def update_partner_product(pid:int,inp:PartnerProductIn,request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'sponsor'); p=s.get(PartnerProduct,pid); st=s.get(PartnerStore,p.store_id) if p else None
+        if not p or not st or st.owner_user_id!=u.id: raise HTTPException(404,'商品がありません')
+        d=inp.model_dump()
+        if d['store_id']!=p.store_id: newst=s.get(PartnerStore,d['store_id']);
+        if d['store_id']!=p.store_id and (not newst or newst.owner_user_id!=u.id): raise HTTPException(403,'店舗権限がありません')
+        for k,v in d.items(): setattr(p,k,v)
+        p.updated_at=now_dt(); audit(s,request,u,'procurement','partner_product_update','partner_product',p.id,{}); s.commit(); return {'ok':True}
+
+@app.get('/api/sponsor/master.xlsx')
+def export_partner_master_xlsx(request:Request):
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'sponsor'); wb=Workbook(); ws=wb.active; ws.title='店舗マスタ'; ws.append(['store_id','company_name','store_name','category','address','phone','hours','closed_days','delivery_area','min_order_amount','order_cutoff','delivery_methods','message','active'])
+        stores=s.query(PartnerStore).filter_by(owner_user_id=u.id).order_by(PartnerStore.id).all()
+        for st in stores: ws.append([st.id,st.company_name,st.store_name,st.category,st.address,st.phone,st.hours,st.closed_days,st.delivery_area,st.min_order_amount,st.order_cutoff,st.delivery_methods,st.message,st.active])
+        ws2=wb.create_sheet('商品マスタ'); ws2.append(['store_id','sku','name','short_message','description','category','specification','unit','price','image_url','recommended','active','sale_start','sale_end'])
+        ids=[x.id for x in stores]
+        for p in s.query(PartnerProduct).filter(PartnerProduct.store_id.in_(ids or [-1])).order_by(PartnerProduct.id).all(): ws2.append([p.store_id,p.sku,p.name,p.short_message,p.description,p.category,p.specification,p.unit,p.price,p.image_url,p.recommended,p.active,p.sale_start,p.sale_end])
+        return _xlsx_response(wb,'ITTOKAI_Sponsor_Master_v20.7.xlsx')
+
+@app.post('/api/sponsor/master/import-xlsx')
+async def import_partner_master_xlsx(request:Request,file:UploadFile=File(...),commit:bool=False):
+    raw=await file.read(); wb=load_workbook(io.BytesIO(raw),data_only=True); preview={'stores_new':0,'stores_update':0,'products_new':0,'products_update':0,'errors':[]}
+    with SessionLocal() as s:
+        u=current_user(request,s); require_roles(u,'sponsor'); store_map={}
+        if '店舗マスタ' in wb.sheetnames:
+            ws=wb['店舗マスタ']; hs=[str(c.value or '').strip() for c in ws[1]]
+            for idx,row in enumerate(ws.iter_rows(min_row=2,values_only=True),start=2):
+                if not any(v not in (None,'') for v in row): continue
+                r={hs[i]:row[i] for i in range(min(len(hs),len(row)))}; sid=int(r.get('store_id') or 0); name=str(r.get('store_name') or '').strip()
+                if not name: preview['errors'].append({'sheet':'店舗マスタ','row':idx,'error':'store_nameは必須'}); continue
+                st=s.get(PartnerStore,sid) if sid else None
+                if st and st.owner_user_id!=u.id: preview['errors'].append({'sheet':'店舗マスタ','row':idx,'error':'他社店舗は更新不可'}); continue
+                preview['stores_update' if st else 'stores_new']+=1
+                if commit and not preview['errors']:
+                    if not st: st=PartnerStore(owner_user_id=u.id,store_name=name); s.add(st); s.flush()
+                    for k in ['company_name','store_name','category','address','phone','hours','closed_days','delivery_area','order_cutoff','delivery_methods','message']:
+                        if k in r: setattr(st,k,str(r.get(k) or ''))
+                    st.min_order_amount=float(r.get('min_order_amount') or 0); st.active=int(float(r.get('active') if r.get('active') is not None else 1)); st.updated_at=now_dt(); store_map[sid or st.id]=st.id
+                elif st: store_map[sid]=st.id
+        if '商品マスタ' in wb.sheetnames:
+            ws=wb['商品マスタ']; hs=[str(c.value or '').strip() for c in ws[1]]
+            for idx,row in enumerate(ws.iter_rows(min_row=2,values_only=True),start=2):
+                if not any(v not in (None,'') for v in row): continue
+                r={hs[i]:row[i] for i in range(min(len(hs),len(row)))}; sid=int(r.get('store_id') or 0); sid=store_map.get(sid,sid); st=s.get(PartnerStore,sid) if sid else None; sku=str(r.get('sku') or '').strip(); name=str(r.get('name') or '').strip()
+                if not st or st.owner_user_id!=u.id or not sku or not name: preview['errors'].append({'sheet':'商品マスタ','row':idx,'error':'store_id/sku/nameを確認してください'}); continue
+                pp=s.query(PartnerProduct).filter_by(store_id=st.id,sku=sku).first(); preview['products_update' if pp else 'products_new']+=1
+                if commit and not preview['errors']:
+                    if not pp: pp=PartnerProduct(store_id=st.id,sku=sku,name=name); s.add(pp)
+                    pp.name=name; pp.short_message=str(r.get('short_message') or ''); pp.description=str(r.get('description') or ''); pp.category=str(r.get('category') or 'ギフト'); pp.specification=str(r.get('specification') or ''); pp.unit=str(r.get('unit') or '個'); pp.price=float(r.get('price') or 0); pp.image_url=str(r.get('image_url') or ''); pp.recommended=int(float(r.get('recommended') or 0)); pp.active=int(float(r.get('active') if r.get('active') is not None else 1)); pp.sale_start=str(r.get('sale_start') or ''); pp.sale_end=str(r.get('sale_end') or ''); pp.updated_at=now_dt()
+        if commit and not preview['errors']:
+            audit(s,request,u,'procurement','partner_xlsx_import','partner_master','',preview); s.commit()
+        return {'ok':True,'commit':commit,**preview}
 
 def make_invoice_pdf(s,inv:Invoice):
     buf=io.BytesIO(); st=pdf_styles(); fac=s.get(Facility,inv.facility_id); sup=s.get(Supplier,inv.supplier_id); story=[Paragraph('請求書',st['title']),Paragraph(f'請求書番号: {inv.invoice_no}',st['body']),Paragraph(f'請求日: {inv.invoice_date}',st['body']),Spacer(1,4*mm),Paragraph(f'請求先: {fac.name if fac else ""}',st['body']),Paragraph(f'発行元: {sup.name if sup else ""}',st['body']),Spacer(1,6*mm)]

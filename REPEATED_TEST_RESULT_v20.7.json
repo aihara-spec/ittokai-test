@@ -1,0 +1,12 @@
+{
+  "version": "20.7",
+  "line_integration_repetitions": 3,
+  "each_run": {
+    "scenarios": 30,
+    "assertions": 117,
+    "result": "PASS"
+  },
+  "total_line_integration_assertions_across_repetitions": 351,
+  "production_line_network_call": "NOT_EXECUTED_NO_REAL_CREDENTIALS",
+  "result": "PASS"
+}
