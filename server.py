@@ -1,3 +1,5 @@
+import logging
+from sqlalchemy.exc import IntegrityError
 import os, io, csv, json, base64, hashlib, hmac, secrets, urllib.request, urllib.parse, urllib.error
 from PIL import Image as PILImage
 from openpyxl import Workbook, load_workbook
@@ -124,6 +126,13 @@ class NotificationDelivery(Base):
 class LineAccountLink(Base):
     __tablename__='line_account_links'
     id=Column(Integer, primary_key=True); user_id=Column(Integer, ForeignKey('users.id'), unique=True, index=True); line_user_id=Column(String(120), unique=True, index=True); verified=Column(Integer, default=1); active=Column(Integer, default=1); linked_at=Column(DateTime, default=now_dt); updated_at=Column(DateTime, default=now_dt)
+
+class LineLinkAttempt(Base):
+    __tablename__='line_link_attempts'
+    id=Column(Integer, primary_key=True)
+    user_id=Column(Integer, ForeignKey('users.id'), index=True)
+    code=Column(String(80)); authenticated=Column(Integer, default=0)
+    created_at=Column(DateTime, default=now_dt)
 
 class CustomerOrder(Base):
     __tablename__='customer_orders'
@@ -541,7 +550,7 @@ def make_document_pdf(s, doc: Document, rec: Optional[DocumentRecipient]=None):
     return evidence
 
 # ------------------ App ------------------
-app=FastAPI(title='ITTOKAI v20.7 Integrated',version='20.7')
+app=FastAPI(title='ITTOKAI v20.7.1 Integrated',version='20.7.1')
 
 @app.middleware('http')
 async def no_store_api_responses(request:Request, call_next):
@@ -560,7 +569,7 @@ with SessionLocal() as _s:
     ensure_notification_rules(_s); _s.commit()
 
 @app.get('/health')
-def health(): return {'ok':True,'version':'20.7','database':'postgresql' if DATABASE_URL.startswith('postgresql') else 'sqlite'}
+def health(): return {'ok':True,'version':'20.7.1','database':'postgresql' if DATABASE_URL.startswith('postgresql') else 'sqlite'}
 
 class LoginIn(BaseModel): email:str; password:str
 @app.post('/api/login')
@@ -657,6 +666,13 @@ def messages_revision(request:Request,user_id:Optional[int]=None):
         u=current_user(request,s)
         return {'revision':chat_revision_value(s,u,user_id)}
 
+def line_account_status(s,uid):
+    linked=bool(line_user_id_for(s,uid))
+    attempt=s.query(LineLinkAttempt).filter_by(user_id=uid).order_by(LineLinkAttempt.id.desc()).first()
+    failed=s.query(NotificationDelivery).filter_by(user_id=uid,channel='line',status='failed').first()
+    status='認証済み保存失敗' if attempt and attempt.authenticated and attempt.code not in ('LINKED','UNLINKED') else '送信失敗' if linked and failed else '連携済み' if linked else '未連携'
+    return {'status':status,'cause_code':attempt.code if attempt else ''}
+
 def notification_health_summary(s,u):
     q=s.query(NotificationDelivery,NotificationEvent).join(NotificationEvent,NotificationDelivery.event_id==NotificationEvent.id).filter(NotificationDelivery.channel=='line')
     if u.role=='admin': q=q.filter(NotificationEvent.facility_id==u.facility_id)
@@ -668,17 +684,20 @@ def notification_health_summary(s,u):
         else: counts['other']+=1
         if d.status=='failed' and len(failed)<10:
             failed.append({'id':d.id,'event_type':e.event_type,'title':e.title,'last_error':d.last_error,'attempts':d.attempts,'created_at':dt_iso(d.created_at)})
-    return {'counts':counts,'failed':failed,'note':'LINEのsentはMessaging API受付成功を表し、端末通知・閲覧までを保証するものではありません。'}
+    users=s.query(User).filter(User.active==1)
+    if u.role=='admin': users=users.filter(User.facility_id==u.facility_id)
+    accounts=[{'user_id':x.id,'name':x.name,**line_account_status(s,x.id)} for x in users.all()]
+    return {'accounts':accounts,'counts':counts,'failed':failed,'note':'LINEのsentはMessaging API受付成功を表し、端末通知・閲覧までを保証するものではありません。'}
 
 @app.get('/api/bootstrap')
 def bootstrap(request:Request):
     with SessionLocal() as s:
         u=current_user(request,s)
         fac=s.get(Facility,u.facility_id) if u.facility_id else None
-        data={'user':user_json(u),'facility':facility_json(fac) if fac else None,'role_labels':ROLE_LABEL,'version':'20.7','targets':{'facilities':50,'staff':1000,'middle_managers':200,'admins':50,'families':2000,'sponsors':100}}
+        data={'user':user_json(u),'facility':facility_json(fac) if fac else None,'role_labels':ROLE_LABEL,'version':'20.7.1','targets':{'facilities':50,'staff':1000,'middle_managers':200,'admins':50,'families':2000,'sponsors':100}}
         if u.role in ('family','admin','hq'): data['document_revision']=document_revision_value(s,u)
         data['notifications']=[{'id':n.id,'title':n.title,'body':n.body,'module':n.module,'entity_id':n.entity_id,'created_at':dt_iso(n.created_at),'read_at':dt_iso(n.read_at),'deep_link':deep_link_for_user(u,n.module,n.entity_id)} for n in s.query(Notification).filter_by(user_id=u.id).order_by(Notification.id.desc()).limit(30).all()]
-        data['line_notification']={'linked':bool(line_user_id_for(s,u.id)),'line_user_id_masked':(('***'+line_user_id_for(s,u.id)[-6:]) if line_user_id_for(s,u.id) else ''),'liff_id':os.environ.get('LIFF_ID',''),'mock_mode':os.environ.get('LINE_MOCK_MODE','')=='1'}
+        data['line_notification']={**line_account_status(s,u.id),'linked':bool(line_user_id_for(s,u.id)),'line_user_id_masked':(('***'+line_user_id_for(s,u.id)[-6:]) if line_user_id_for(s,u.id) else ''),'liff_id':os.environ.get('LIFF_ID',''),'mock_mode':os.environ.get('LINE_MOCK_MODE','')=='1'}
         if u.role in ('admin','hq'): data['notification_health']=notification_health_summary(s,u)
         if u.role=='family':
             links=s.query(FamilyLink,Resident).join(Resident,FamilyLink.resident_id==Resident.id).filter(FamilyLink.user_id==u.id).all(); resident_ids=[r.id for _,r in links]
@@ -731,30 +750,52 @@ def _verify_line_id_token(raw):
         with urllib.request.urlopen(req,timeout=8) as res: out=json.loads(res.read().decode('utf-8'))
     except Exception as e:
         raise HTTPException(400,'LINE IDトークンを検証できません') from e
-    if not out.get('sub'): raise HTTPException(400,'LINEユーザーIDを確認できません')
+    if out.get('aud') != client_id or out.get('iss') != 'https://access.line.me' or not isinstance(out.get('exp'), (int,float)) or out['exp'] <= datetime.now(timezone.utc).timestamp(): raise HTTPException(400,'LINE_TOKEN_INVALID')
+    if not isinstance(out.get('sub'),str) or not out.get('sub'): raise HTTPException(400,'LINEユーザーIDを確認できません')
     return out
 
 @app.get('/api/line/config')
 def line_config():
     return {'liff_id':os.environ.get('LIFF_ID',''),'enabled':bool(os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')),'mock_mode':os.environ.get('LINE_MOCK_MODE','')=='1'}
 
+def record_line_attempt(user_id, code, authenticated):
+    logging.getLogger('ittokai.line').warning('line_link user_id=%s code=%s authenticated=%s', user_id, code, authenticated)
+    try:
+        with SessionLocal() as log_session:
+            log_session.add(LineLinkAttempt(user_id=user_id,code=code,authenticated=int(authenticated)))
+            log_session.commit()
+    except Exception:
+        logging.getLogger('ittokai.line').error('line_link diagnostic persistence failed user_id=%s code=%s',user_id,code)
+
 @app.post('/api/line/link')
 def line_link(inp:LineLinkIn,request:Request):
     with SessionLocal() as s:
-        u=current_user(request,s); profile=_verify_line_id_token(inp.id_token); line_id=profile['sub']
-        conflict=s.query(LineAccountLink).filter(LineAccountLink.line_user_id==line_id,LineAccountLink.user_id!=u.id,LineAccountLink.active==1).first()
-        if conflict: raise HTTPException(409,'このLINEアカウントは別のITTOKAIアカウントに連携済みです')
-        stale=s.query(LineAccountLink).filter(LineAccountLink.line_user_id==line_id,LineAccountLink.user_id!=u.id,LineAccountLink.active==0).first()
-        if stale: stale.line_user_id=None; stale.updated_at=now_dt()
-        link=s.query(LineAccountLink).filter_by(user_id=u.id).first() or LineAccountLink(user_id=u.id,line_user_id=line_id)
-        link.line_user_id=line_id; link.verified=1; link.active=1; link.updated_at=now_dt(); s.add(link); u.line_user_id=line_id
-        audit(s,request,u,'notifications','line_link','user',u.id,{},u.facility_id); s.commit(); return {'ok':True,'linked':True}
+        u=current_user(request,s); uid=u.id; authenticated=False
+        try:
+            profile=_verify_line_id_token(inp.id_token); authenticated=True; line_id=profile['sub']
+            # Reserve LINE identities even after unlink, preventing accidental account transfer.
+            conflict=s.query(LineAccountLink).filter(LineAccountLink.line_user_id==line_id,LineAccountLink.user_id!=uid).first()
+            legacy=s.query(User).filter(User.line_user_id==line_id,User.id!=uid).first()
+            if conflict or legacy: raise HTTPException(409,'LINE_ACCOUNT_CONFLICT')
+            link=s.query(LineAccountLink).filter_by(user_id=uid).first() or LineAccountLink(user_id=uid,line_user_id=line_id)
+            link.line_user_id=line_id; link.verified=1; link.active=1; link.updated_at=now_dt(); s.add(link); u.line_user_id=line_id
+            s.add(LineLinkAttempt(user_id=uid,code='LINKED',authenticated=1))
+            audit(s,request,u,'notifications','line_link','user',uid,{},u.facility_id)
+            s.commit()
+            return {'ok':True,'linked':True}
+        except Exception as exc:
+            s.rollback()
+            code=('LINE_ACCOUNT_CONFLICT' if isinstance(exc,IntegrityError) else str(exc.detail) if isinstance(exc,HTTPException) and exc.status_code==409 else 'LINE_SAVE_FAILED' if authenticated else 'LINE_AUTH_FAILED')
+            record_line_attempt(uid,code,authenticated)
+            message='LINE認証には成功しましたが、ITTOKAIとの連携保存に失敗しました' if authenticated else 'LINE認証を確認できませんでした'
+            raise HTTPException(409 if code=='LINE_ACCOUNT_CONFLICT' else 503 if authenticated else 400, message+' ['+code+']') from exc
 
 @app.post('/api/line/unlink')
 def line_unlink(request:Request):
     with SessionLocal() as s:
         u=current_user(request,s); link=s.query(LineAccountLink).filter_by(user_id=u.id).first()
         if link: link.active=0; link.updated_at=now_dt()
+        s.add(LineLinkAttempt(user_id=u.id,code='UNLINKED',authenticated=0))
         u.line_user_id=''; audit(s,request,u,'notifications','line_unlink','user',u.id,{},u.facility_id); s.commit(); return {'ok':True,'linked':False}
 
 @app.post('/api/notifications/{nid}/read')

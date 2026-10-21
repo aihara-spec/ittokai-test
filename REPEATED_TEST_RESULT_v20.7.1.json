@@ -1,0 +1,42 @@
+{
+  "version": "20.7.1",
+  "runs": [
+    {
+      "round": 1,
+      "suite": "auth",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "round": 1,
+      "suite": "simulation",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "round": 1,
+      "suite": "feature_test",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "round": 2,
+      "suite": "auth",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "round": 2,
+      "suite": "simulation",
+      "exit_code": 0,
+      "result": "PASS"
+    },
+    {
+      "round": 2,
+      "suite": "feature_test",
+      "exit_code": 0,
+      "result": "PASS"
+    }
+  ],
+  "result": "PASS"
+}

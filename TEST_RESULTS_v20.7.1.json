@@ -1,0 +1,96 @@
+{
+  "version": "20.7.1",
+  "base_commit": "16273c8da6febcbeb88c44ebbf94dc362610524e",
+  "result": "PASS",
+  "repeated_tests": {
+    "version": "20.7.1",
+    "runs": [
+      {
+        "round": 1,
+        "suite": "auth",
+        "exit_code": 0,
+        "result": "PASS"
+      },
+      {
+        "round": 1,
+        "suite": "simulation",
+        "exit_code": 0,
+        "result": "PASS"
+      },
+      {
+        "round": 1,
+        "suite": "feature_test",
+        "exit_code": 0,
+        "result": "PASS"
+      },
+      {
+        "round": 2,
+        "suite": "auth",
+        "exit_code": 0,
+        "result": "PASS"
+      },
+      {
+        "round": 2,
+        "suite": "simulation",
+        "exit_code": 0,
+        "result": "PASS"
+      },
+      {
+        "round": 2,
+        "suite": "feature_test",
+        "exit_code": 0,
+        "result": "PASS"
+      }
+    ],
+    "result": "PASS"
+  },
+  "reports": {
+    "TEST_RESULT_v20.7.1.json": {
+      "version": "20.7.1",
+      "scenario_cycles": 68,
+      "assertions": 437,
+      "failures": [],
+      "result": "PASS"
+    },
+    "TEST_RESULT_v20.7.1_AUTH.json": {
+      "version": "20.7.1",
+      "result": "PASS",
+      "additional_assertions": 41,
+      "roles": [
+        "family",
+        "staff",
+        "middle_manager",
+        "admin",
+        "hq",
+        "caredo",
+        "sponsor"
+      ],
+      "real_LINE_send": false,
+      "postgresql_tested": false
+    },
+    "TEST_RESULT_v20.7.1_FEATURES.json": {
+      "version": "20.7.1",
+      "checks": 72,
+      "result": "PASS"
+    },
+    "TEST_RESULT_v20.7.1_LINE.json": {
+      "version": "20.7.1",
+      "scenarios": 30,
+      "assertions": 117,
+      "result": "PASS",
+      "failures": []
+    },
+    "TEST_RESULT_v20.7.1_UI.json": {
+      "version": "20.7.1",
+      "result": "PASS",
+      "assertions": 49,
+      "scope": "LIFF redirect/resume/UI failure/session user binding; mocked SDK and API, Node VM"
+    }
+  },
+  "limitations": [
+    "実LINEログイン往復・実送信・Renderデプロイは未実施",
+    "PostgreSQL実機試験は未実施",
+    "UIはNode VMでSDK/APIを差し替えた試験"
+  ],
+  "environment": "Windows / Python 3.12 / SQLite"
+}

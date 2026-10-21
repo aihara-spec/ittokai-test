@@ -1,0 +1,16 @@
+{
+  "version": "20.7.1",
+  "result": "PASS",
+  "additional_assertions": 41,
+  "roles": [
+    "family",
+    "staff",
+    "middle_manager",
+    "admin",
+    "hq",
+    "caredo",
+    "sponsor"
+  ],
+  "real_LINE_send": false,
+  "postgresql_tested": false
+}

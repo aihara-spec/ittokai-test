@@ -1,0 +1,6 @@
+{
+  "version": "20.7.1",
+  "result": "PASS",
+  "assertions": 49,
+  "scope": "LIFF redirect/resume/UI failure/session user binding; mocked SDK and API, Node VM"
+}
