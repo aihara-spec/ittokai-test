@@ -1,0 +1,8 @@
+{
+  "version": "20.7.1",
+  "checks": 72,
+  "result": "PASS"
+}
+
+C:\Users\aihara-r\Documents\Codex\2026-10-21\referenced-chatgpt-conversation-this-is-an\work\pylibs\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa

@@ -1,0 +1,18 @@
+{
+  "version": "20.7.1",
+  "scenarios": 30,
+  "assertions": 117,
+  "result": "PASS",
+  "failures": []
+}
+{"version": "20.7.1", "result": "PASS", "additional_assertions": 41, "roles": ["family", "staff", "middle_manager", "admin", "hq", "caredo", "sponsor"], "real_LINE_send": false, "postgresql_tested": false}
+
+C:\Users\aihara-r\Documents\Codex\2026-10-21\referenced-chatgpt-conversation-this-is-an\work\pylibs\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+line_link user_id=2 code=LINE_ACCOUNT_CONFLICT authenticated=True
+line_link user_id=1 code=LINE_AUTH_FAILED authenticated=False
+line_link user_id=1 code=LINE_AUTH_FAILED authenticated=False
+line_link user_id=1 code=LINE_AUTH_FAILED authenticated=False
+line_link user_id=1 code=LINE_AUTH_FAILED authenticated=False
+line_link user_id=1 code=LINE_SAVE_FAILED authenticated=True
+line_link user_id=2 code=LINE_ACCOUNT_CONFLICT authenticated=True
