@@ -550,7 +550,7 @@ def make_document_pdf(s, doc: Document, rec: Optional[DocumentRecipient]=None):
     return evidence
 
 # ------------------ App ------------------
-app=FastAPI(title='ITTOKAI v20.7.1 Integrated',version='20.7.1')
+app=FastAPI(title='ITTOKAI v20.7.2 Integrated',version='20.7.2')
 
 @app.middleware('http')
 async def no_store_api_responses(request:Request, call_next):
@@ -569,7 +569,7 @@ with SessionLocal() as _s:
     ensure_notification_rules(_s); _s.commit()
 
 @app.get('/health')
-def health(): return {'ok':True,'version':'20.7.1','database':'postgresql' if DATABASE_URL.startswith('postgresql') else 'sqlite'}
+def health(): return {'ok':True,'version':'20.7.2','database':'postgresql' if DATABASE_URL.startswith('postgresql') else 'sqlite'}
 
 class LoginIn(BaseModel): email:str; password:str
 @app.post('/api/login')
@@ -694,7 +694,7 @@ def bootstrap(request:Request):
     with SessionLocal() as s:
         u=current_user(request,s)
         fac=s.get(Facility,u.facility_id) if u.facility_id else None
-        data={'user':user_json(u),'facility':facility_json(fac) if fac else None,'role_labels':ROLE_LABEL,'version':'20.7.1','targets':{'facilities':50,'staff':1000,'middle_managers':200,'admins':50,'families':2000,'sponsors':100}}
+        data={'user':user_json(u),'facility':facility_json(fac) if fac else None,'role_labels':ROLE_LABEL,'version':'20.7.2','targets':{'facilities':50,'staff':1000,'middle_managers':200,'admins':50,'families':2000,'sponsors':100}}
         if u.role in ('family','admin','hq'): data['document_revision']=document_revision_value(s,u)
         data['notifications']=[{'id':n.id,'title':n.title,'body':n.body,'module':n.module,'entity_id':n.entity_id,'created_at':dt_iso(n.created_at),'read_at':dt_iso(n.read_at),'deep_link':deep_link_for_user(u,n.module,n.entity_id)} for n in s.query(Notification).filter_by(user_id=u.id).order_by(Notification.id.desc()).limit(30).all()]
         data['line_notification']={**line_account_status(s,u.id),'linked':bool(line_user_id_for(s,u.id)),'line_user_id_masked':(('***'+line_user_id_for(s,u.id)[-6:]) if line_user_id_for(s,u.id) else ''),'liff_id':os.environ.get('LIFF_ID',''),'mock_mode':os.environ.get('LINE_MOCK_MODE','')=='1'}
@@ -773,8 +773,14 @@ def line_link(inp:LineLinkIn,request:Request):
         u=current_user(request,s); uid=u.id; authenticated=False
         try:
             profile=_verify_line_id_token(inp.id_token); authenticated=True; line_id=profile['sub']
-            # Reserve LINE identities even after unlink, preventing accidental account transfer.
-            conflict=s.query(LineAccountLink).filter(LineAccountLink.line_user_id==line_id,LineAccountLink.user_id!=uid).first()
+            # Only active links reserve a LINE identity; release older inactive reservations atomically.
+            conflict=s.query(LineAccountLink).filter(LineAccountLink.line_user_id==line_id,LineAccountLink.user_id!=uid,LineAccountLink.active==1).first()
+            stale=s.query(LineAccountLink).filter(LineAccountLink.line_user_id==line_id,LineAccountLink.user_id!=uid,LineAccountLink.active==0).all()
+            for old in stale:
+                owner=s.get(User,old.user_id)
+                if owner and owner.line_user_id==line_id: owner.line_user_id=''
+                old.line_user_id=None; old.verified=0; old.updated_at=now_dt()
+            s.flush()
             legacy=s.query(User).filter(User.line_user_id==line_id,User.id!=uid).first()
             if conflict or legacy: raise HTTPException(409,'LINE_ACCOUNT_CONFLICT')
             link=s.query(LineAccountLink).filter_by(user_id=uid).first() or LineAccountLink(user_id=uid,line_user_id=line_id)
@@ -794,7 +800,7 @@ def line_link(inp:LineLinkIn,request:Request):
 def line_unlink(request:Request):
     with SessionLocal() as s:
         u=current_user(request,s); link=s.query(LineAccountLink).filter_by(user_id=u.id).first()
-        if link: link.active=0; link.updated_at=now_dt()
+        if link: link.active=0; link.verified=0; link.line_user_id=None; link.updated_at=now_dt()
         s.add(LineLinkAttempt(user_id=u.id,code='UNLINKED',authenticated=0))
         u.line_user_id=''; audit(s,request,u,'notifications','line_unlink','user',u.id,{},u.facility_id); s.commit(); return {'ok':True,'linked':False}
 
