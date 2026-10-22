@@ -187,7 +187,7 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.tok
 window.addEventListener('storage',e=>{if(e.key==='ittokai_doc_revision'&&state.token)checkActiveUpdates(false)});
 startAutoSync();
 window.addEventListener('unhandledrejection',e=>{try{toast(e.reason?.message||'通信エラーが発生しました')}catch{}e.preventDefault()});
-if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js?v=20.7.1').catch(()=>{});
+if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js?v=20.7.2').catch(()=>{});
 setTimeout(()=>$('#startup')?.classList.add('hide'),550);
 if(state.token)load().then(()=>{if(sessionStorage.getItem('ittokai_line_pending'))completeLineLink(false)});else render();
 
